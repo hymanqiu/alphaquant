@@ -1,6 +1,6 @@
 """LangGraph value analyst workflow.
 
-Orchestrates: fetch_sec_data -> financial_health_scan -> dynamic_dcf -> logic_trace
+Orchestrates: fetch_sec_data -> financial_health_scan -> dynamic_dcf -> strategy -> logic_trace
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from backend.services.ticker_resolver import TickerNotFoundError
 from .nodes.dcf_model import dcf_node
 from .nodes.financial_health import financial_health_node
 from .nodes.logic_trace import logic_trace_node
+from .nodes.strategy import strategy_node
 
 
 async def fetch_sec_data_node(
@@ -174,6 +175,7 @@ def build_value_analyst_graph() -> StateGraph:
     graph.add_node("fetch_sec_data", fetch_sec_data_node)
     graph.add_node("financial_health_scan", financial_health_node)
     graph.add_node("dynamic_dcf", dcf_node)
+    graph.add_node("strategy", strategy_node)
     graph.add_node("logic_trace", logic_trace_node)
 
     graph.add_edge(START, "fetch_sec_data")
@@ -183,7 +185,8 @@ def build_value_analyst_graph() -> StateGraph:
         {"continue": "financial_health_scan", "error": END},
     )
     graph.add_edge("financial_health_scan", "dynamic_dcf")
-    graph.add_edge("dynamic_dcf", "logic_trace")
+    graph.add_edge("dynamic_dcf", "strategy")
+    graph.add_edge("strategy", "logic_trace")
     graph.add_edge("logic_trace", END)
 
     return graph

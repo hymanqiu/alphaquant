@@ -67,6 +67,35 @@ export function AnalysisLayout({ ticker }: AnalysisLayoutProps) {
                 },
               };
             }
+            if (
+              comp.component_type === "strategy_dashboard" &&
+              result.intrinsic_value_per_share != null &&
+              result.intrinsic_value_per_share > 0
+            ) {
+              const newIntrinsic = result.intrinsic_value_per_share as number;
+              const currentPrice = comp.props.current_price as number;
+              const mosPct =
+                ((newIntrinsic - currentPrice) / newIntrinsic) * 100;
+              const upside =
+                ((newIntrinsic - currentPrice) / currentPrice) * 100;
+              const suggestedEntry = newIntrinsic * 0.85;
+              let signal: string;
+              if (mosPct > 25) signal = "Deep Value";
+              else if (mosPct > 10) signal = "Undervalued";
+              else if (mosPct > -10) signal = "Fair Value";
+              else signal = "Overvalued";
+              return {
+                ...comp,
+                props: {
+                  ...comp.props,
+                  intrinsic_value: newIntrinsic,
+                  margin_of_safety_pct: Math.round(mosPct * 10) / 10,
+                  suggested_entry_price: Math.round(suggestedEntry * 100) / 100,
+                  upside_pct: Math.round(upside * 10) / 10,
+                  signal,
+                },
+              };
+            }
             return comp;
           })
         );

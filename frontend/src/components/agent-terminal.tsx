@@ -9,6 +9,7 @@ const NODE_COLORS: Record<string, string> = {
   fetch_sec_data: "bg-blue-500",
   financial_health_scan: "bg-emerald-500",
   dynamic_dcf: "bg-amber-500",
+  strategy: "bg-rose-500",
   logic_trace: "bg-purple-500",
 };
 
@@ -16,6 +17,7 @@ const NODE_LABELS: Record<string, string> = {
   fetch_sec_data: "SEC Fetch",
   financial_health_scan: "Health Scan",
   dynamic_dcf: "DCF Model",
+  strategy: "Strategy",
   logic_trace: "Source Trace",
 };
 

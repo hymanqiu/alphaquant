@@ -1,0 +1,189 @@
+"""Node: Strategy analysis — margin of safety, P/E percentile, entry signal."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from langgraph.types import StreamWriter
+
+from backend.models.agent_state import AnalysisState
+from backend.models.events import (
+    AgentThinkingEvent,
+    ComponentEvent,
+    ErrorEvent,
+    StepCompleteEvent,
+)
+from backend.services.market_data import market_data_client
+
+
+def _determine_signal(margin_of_safety_pct: float) -> str:
+    if margin_of_safety_pct > 25:
+        return "Deep Value"
+    if margin_of_safety_pct > 10:
+        return "Undervalued"
+    if margin_of_safety_pct > -10:
+        return "Fair Value"
+    return "Overvalued"
+
+
+async def strategy_node(
+    state: AnalysisState, writer: StreamWriter
+) -> dict[str, Any]:
+    financials = state["financials"]
+    dcf = state["dcf_result"]
+
+    if not financials or not dcf or not dcf.get("intrinsic_value_per_share"):
+        writer(AgentThinkingEvent(
+            node="strategy",
+            content="Strategy analysis requires a valid DCF intrinsic value. Skipping.",
+        ).model_dump())
+        writer(StepCompleteEvent(
+            node="strategy",
+            summary="Strategy skipped: no intrinsic value available.",
+        ).model_dump())
+        return {
+            "strategy_result": None,
+            "reasoning_steps": ["Strategy: skipped — no intrinsic value"],
+        }
+
+    try:
+        return await _run_strategy(financials, dcf, writer)
+    except Exception as e:
+        writer(ErrorEvent(
+            message=f"Strategy analysis failed: {e}",
+            recoverable=True,
+        ).model_dump())
+        writer(StepCompleteEvent(
+            node="strategy",
+            summary="Strategy analysis encountered an error.",
+        ).model_dump())
+        return {
+            "strategy_result": None,
+            "reasoning_steps": [f"Strategy: error — {e}"],
+        }
+
+
+async def _run_strategy(
+    financials: Any, dcf: dict[str, Any], writer: StreamWriter
+) -> dict[str, Any]:
+    intrinsic: float = dcf["intrinsic_value_per_share"]
+    ticker = financials.ticker
+    reasoning: list[str] = []
+
+    # --- Fetch current market price ---
+    writer(AgentThinkingEvent(
+        node="strategy",
+        content=f"Fetching current market price for {ticker}...",
+    ).model_dump())
+
+    current_price = await market_data_client.get_current_price(ticker)
+    if current_price is None or current_price <= 0:
+        writer(AgentThinkingEvent(
+            node="strategy",
+            content="Could not fetch market price. Strategy analysis skipped.",
+        ).model_dump())
+        writer(StepCompleteEvent(
+            node="strategy",
+            summary="Strategy skipped: market data unavailable.",
+        ).model_dump())
+        return {
+            "strategy_result": None,
+            "reasoning_steps": ["Strategy: skipped — market data unavailable"],
+        }
+
+    reasoning.append(f"Current market price: ${current_price:.2f}")
+
+    # --- Margin of Safety ---
+    mos_pct = (intrinsic - current_price) / intrinsic * 100
+    suggested_entry = round(intrinsic * 0.85, 2)
+    upside_pct = (intrinsic - current_price) / current_price * 100
+    signal = _determine_signal(mos_pct)
+
+    reasoning.append(f"Margin of safety: {mos_pct:.1f}%")
+    reasoning.append(f"Signal: {signal}")
+
+    writer(AgentThinkingEvent(
+        node="strategy",
+        content=(
+            f"Price ${current_price:.2f} vs intrinsic ${intrinsic:.2f} — "
+            f"margin of safety {mos_pct:.1f}%. Signal: {signal}"
+        ),
+    ).model_dump())
+
+    # --- P/E Percentile ---
+    writer(AgentThinkingEvent(
+        node="strategy",
+        content="Computing historical P/E percentile...",
+    ).model_dump())
+
+    annual_prices = await market_data_client.get_annual_closing_prices(ticker, years=10)
+    eps_by_year = {m.calendar_year: m.value for m in financials.diluted_eps}
+
+    historical_pe: list[dict[str, Any]] = []
+    for year in sorted(set(annual_prices.keys()) & set(eps_by_year.keys())):
+        eps = eps_by_year[year]
+        if eps > 0:
+            pe = annual_prices[year] / eps
+            historical_pe.append({"year": year, "pe": round(pe, 1)})
+
+    current_pe: float | None = None
+    pe_percentile: float | None = None
+    latest_eps = financials.diluted_eps[-1].value if financials.diluted_eps else None
+
+    if latest_eps and latest_eps > 0:
+        current_pe = round(current_price / latest_eps, 1)
+        reasoning.append(f"Current P/E: {current_pe}")
+
+        if len(historical_pe) >= 3:
+            pe_values = sorted(h["pe"] for h in historical_pe)
+            rank = sum(1 for v in pe_values if v <= current_pe)
+            pe_percentile = round(rank / len(pe_values) * 100, 1)
+            reasoning.append(
+                f"P/E at {pe_percentile:.0f}th percentile over {len(pe_values)} years"
+            )
+            writer(AgentThinkingEvent(
+                node="strategy",
+                content=f"Current P/E {current_pe} at {pe_percentile:.0f}th percentile ({len(pe_values)} years of data)",
+            ).model_dump())
+        else:
+            writer(AgentThinkingEvent(
+                node="strategy",
+                content=f"Current P/E: {current_pe}. Insufficient historical data for percentile.",
+            ).model_dump())
+    else:
+        writer(AgentThinkingEvent(
+            node="strategy",
+            content="EPS is negative or unavailable — P/E percentile not computed.",
+        ).model_dump())
+
+    # --- Emit strategy dashboard ---
+    strategy_result = {
+        "current_price": current_price,
+        "intrinsic_value": intrinsic,
+        "margin_of_safety_pct": round(mos_pct, 1),
+        "suggested_entry_price": suggested_entry,
+        "upside_pct": round(upside_pct, 1),
+        "signal": signal,
+        "current_pe": current_pe,
+        "pe_percentile": pe_percentile,
+        "historical_pe": historical_pe if historical_pe else None,
+    }
+
+    writer(ComponentEvent(
+        component_type="strategy_dashboard",
+        props={
+            "entity_name": financials.entity_name,
+            "ticker": ticker,
+            **strategy_result,
+        },
+    ).model_dump())
+
+    writer(StepCompleteEvent(
+        node="strategy",
+        summary=f"Entry strategy: {signal}. Margin of safety: {mos_pct:.1f}%. Price: ${current_price:.2f} vs intrinsic: ${intrinsic:.2f}.",
+    ).model_dump())
+
+    return {
+        "strategy_result": strategy_result,
+        "reasoning_steps": reasoning,
+    }

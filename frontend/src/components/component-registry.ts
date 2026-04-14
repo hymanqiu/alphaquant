@@ -9,6 +9,7 @@ const registry: Record<string, ComponentType<any>> = {
   dcf_result_card: lazy(() => import("./analysis/dcf-result-card")),
   valuation_gauge: lazy(() => import("./analysis/valuation-gauge")),
   assumption_slider: lazy(() => import("./analysis/assumption-slider")),
+  strategy_dashboard: lazy(() => import("./analysis/strategy-dashboard")),
   source_table: lazy(() => import("./analysis/source-table")),
 };
 

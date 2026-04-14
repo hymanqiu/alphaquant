@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
 from backend.config import settings
+from backend.services.market_data import market_data_client
 from backend.services.sec_client import sec_client
 from backend.services.ticker_resolver import ticker_resolver
 
@@ -16,8 +17,9 @@ async def lifespan(app: FastAPI):
     # Startup: pre-load ticker -> CIK mapping
     await ticker_resolver.load()
     yield
-    # Shutdown: close HTTP client
+    # Shutdown: close HTTP clients
     await sec_client.close()
+    await market_data_client.close()
 
 
 app = FastAPI(

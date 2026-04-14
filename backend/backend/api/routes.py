@@ -29,6 +29,7 @@ async def analyze_ticker(ticker: str) -> EventSourceResponse:
             "health_metrics": None,
             "health_assessment": None,
             "dcf_result": None,
+            "strategy_result": None,
             "source_map": None,
             "reasoning_steps": [],
             "verdict": None,

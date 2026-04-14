@@ -17,7 +17,7 @@ AlphaQuant is a white-box AI investment research system. It fetches raw SEC EDGA
 │                              │             └────────────────┼────┘ │
 │                              │                              │      │
 │                    SSE Stream│              Component Registry      │
-│                    (实时推送) │              (lazy load 8 组件)     │
+│                    (实时推送) │              (lazy load 9 组件)     │
 └──────────────────────────────┼──────────────────────────────┼──────┘
                                │                              │
                         GET /api/analyze/{ticker}    POST /api/recalculate-dcf
@@ -34,6 +34,9 @@ AlphaQuant is a white-box AI investment research system. It fetches raw SEC EDGA
 │  │                             │    dynamic_dcf                 │   │
 │  │                             v         │                      │   │
 │  │                            END        v                      │   │
+│  │                              strategy (买入点决策)            │   │
+│  │                                   │                          │   │
+│  │                                   v                          │   │
 │  │                              logic_trace ──> END             │   │
 │  └──────────────────────┬──────────────────────────────────────┘   │
 │                         │                                           │
@@ -41,18 +44,27 @@ AlphaQuant is a white-box AI investment research system. It fetches raw SEC EDGA
 │                    (每个节点实时发射事件)                             │
 │                         │                                           │
 │  ┌──────────────────────v──────────────────────────────────────┐   │
-│  │              SEC Data Pipeline                               │   │
-│  │  TickerResolver ──> SECClient ──> SECDataService             │   │
-│  │  (ticker→CIK)      (EDGAR API)    (XBRL归一化)              │   │
+│  │              Data Pipelines                                  │   │
+│  │  ┌───────────────────────────────────────────┐               │   │
+│  │  │ SEC Pipeline                               │               │   │
+│  │  │ TickerResolver ──> SECClient ──> SECData   │               │   │
+│  │  │ (ticker→CIK)      (EDGAR API)  (XBRL归一化)│               │   │
+│  │  └───────────────────────────────────────────┘               │   │
+│  │  ┌───────────────────────────────────────────┐               │   │
+│  │  │ Market Data Pipeline                       │               │   │
+│  │  │ MarketDataClient (FMP API)                 │               │   │
+│  │  │ (实时股价 + 历史年终收盘价)                 │               │   │
+│  │  └───────────────────────────────────────────┘               │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
                                │
-                               v
-                    ┌─────────────────────┐
-                    │   SEC EDGAR API      │
-                    │   data.sec.gov       │
-                    │   (XBRL/JSON)        │
-                    └─────────────────────┘
+                    ┌──────────┴──────────┐
+                    v                     v
+          ┌─────────────────┐   ┌──────────────────────┐
+          │  SEC EDGAR API   │   │  FMP API              │
+          │  data.sec.gov    │   │  financialmodelingprep │
+          │  (XBRL/JSON)     │   │  (股价/历史行情)       │
+          └─────────────────┘   └──────────────────────┘
 ```
 
 ---
@@ -74,13 +86,15 @@ alpha/
 │   │   ├── services/
 │   │   │   ├── ticker_resolver.py              # Ticker → CIK 映射
 │   │   │   ├── sec_client.py                   # EDGAR HTTP 客户端 (httpx)
-│   │   │   └── sec_agent.py                    # XBRL 归一化层 (核心领域逻辑)
+│   │   │   ├── sec_agent.py                    # XBRL 归一化层 (核心领域逻辑)
+│   │   │   └── market_data.py                  # FMP 市场行情客户端 (httpx)
 │   │   ├── agents/
 │   │   │   ├── value_analyst.py                # LangGraph StateGraph 编排
 │   │   │   └── nodes/
 │   │   │       ├── financial_health.py         # 节点1: 财务健康扫描
 │   │   │       ├── dcf_model.py                # 节点2: 动态 DCF 建模
-│   │   │       └── logic_trace.py              # 节点3: 数据溯源
+│   │   │       ├── strategy.py                 # 节点3: 安全边际 & 买入策略
+│   │   │       └── logic_trace.py              # 节点4: 数据溯源
 │   │   └── api/
 │   │       ├── routes.py                       # SSE + 重算端点
 │   │       └── dependencies.py                 # 内存缓存 (DCF 重算用)
@@ -109,6 +123,7 @@ alpha/
         │       ├── dcf-result-card.tsx          # DCF 估值结果
         │       ├── valuation-gauge.tsx          # 估值仪表
         │       ├── assumption-slider.tsx        # 假设参数滑块
+        │       ├── strategy-dashboard.tsx       # 估值热力仪表盘 (买入策略)
         │       └── source-table.tsx             # SEC 数据溯源表
         └── lib/
             ├── types.ts                        # TypeScript 类型定义
@@ -129,6 +144,9 @@ main.py: lifespan()
     │   └── GET https://www.sec.gov/files/company_tickers.json
     │       └── 解析约 10,000+ 公司映射: {"NVDA": (1045810, "NVIDIA CORP"), ...}
     │       └── 存入内存字典 _cache
+    │
+    ├── market_data_client (FMP API httpx 客户端, 懒初始化)
+    │   └── 需要环境变量 AQ_FMP_API_KEY (未设置则 strategy 节点跳过)
     │
     └── FastAPI app ready on :8000
         ├── CORS 允许 localhost:3000
@@ -184,6 +202,9 @@ routes.py: analyze_ticker("NVDA")
     │                                              dynamic_dcf
     │                                                   │
     │                                                   v
+    │                                              strategy (买入策略)
+    │                                                   │
+    │                                                   v
     │                                              logic_trace ──> END
     │
     ├── initial_state = {
@@ -193,6 +214,7 @@ routes.py: analyze_ticker("NVDA")
     │       health_metrics: None,
     │       health_assessment: None,
     │       dcf_result: None,
+    │       strategy_result: None,
     │       source_map: None,
     │       reasoning_steps: [],  # Annotated[list, add] 追加模式
     │       verdict: None,
@@ -415,7 +437,68 @@ dcf_node(state, writer)
     └── return {dcf_result: {...}, reasoning_steps}
 ```
 
-#### Node 4: `logic_trace` (数据溯源)
+#### Node 4: `strategy` (安全边际 & 买入策略)
+
+```
+strategy_node(state, writer)
+    │
+    ├── 前置检查: financials 和 dcf_result.intrinsic_value_per_share 必须存在
+    │   └── 缺失则跳过: 发射 StepCompleteEvent("Strategy skipped"), return None
+    │
+    ├── 获取实时市场价格:
+    │   ├── market_data_client.get_current_price("NVDA")
+    │   │   └── GET https://financialmodelingprep.com/api/v3/quote-short/NVDA?apikey=KEY
+    │   │       └── 返回: [{"symbol":"NVDA","price":110.93,"volume":304857600}]
+    │   └── current_price = $110.93
+    │       └── 失败或 ≤ 0 则跳过 (优雅降级, 不阻塞后续节点)
+    │
+    ├── 计算安全边际 (Margin of Safety):
+    │   ├── mos_pct = (intrinsic - current_price) / intrinsic × 100
+    │   │   └── ($220.36 - $110.93) / $220.36 × 100 = 49.7%
+    │   ├── suggested_entry = intrinsic × 0.85 = $187.31 (15% 安全边际)
+    │   ├── upside_pct = (intrinsic - current_price) / current_price × 100
+    │   │   └── ($220.36 - $110.93) / $110.93 × 100 = 98.7%
+    │   └── signal = _determine_signal(mos_pct):
+    │       ├── > 25%  → "Deep Value"    ← 此例 49.7%
+    │       ├── > 10%  → "Undervalued"
+    │       ├── > -10% → "Fair Value"
+    │       └── else   → "Overvalued"
+    │
+    ├── 计算 P/E 历史分位数:
+    │   ├── market_data_client.get_annual_closing_prices("NVDA", years=10)
+    │   │   └── GET /api/v3/historical-price-full/NVDA?apikey=KEY&from=2016-04-14
+    │   │       └── 返回每年最后交易日收盘价 (使用原始 close, 非 adjClose)
+    │   │
+    │   ├── 交叉匹配: 年终股价 × SEC diluted_eps → 每年 P/E
+    │   │   ├── 使用 raw close + raw EPS → P/E 对股票拆分不变 (P/E invariant)
+    │   │   └── 只计算 EPS > 0 的年份 (亏损年跳过)
+    │   │
+    │   ├── current_pe = current_price / latest_eps
+    │   │   └── $110.93 / $4.90 = 22.6x
+    │   │
+    │   └── pe_percentile = rank(current_pe) / count × 100
+    │       └── 当前 P/E 在过去 N 年中所处位置 (需 ≥ 3 年数据)
+    │
+    ├── writer 发射事件:
+    │   ├── AgentThinkingEvent × 5 (价格/MoS/信号/P/E)
+    │   ├── ComponentEvent("strategy_dashboard", {
+    │   │       entity_name, ticker, current_price, intrinsic_value,
+    │   │       margin_of_safety_pct, suggested_entry_price, upside_pct,
+    │   │       signal, current_pe, pe_percentile, historical_pe,
+    │   │   })
+    │   │   └── 前端挂载 StrategyDashboard: 估值热力仪表盘
+    │   │       ├── Signal 徽章 (绿/黄/红)
+    │   │       ├── 三列价格对比: 市价 | 内在价值 | 建议买入价
+    │   │       ├── 估值温度计 (CSS 渐变 red→amber→green + 标记线)
+    │   │       ├── 安全边际% + 上行/下行空间%
+    │   │       ├── P/E 分位数进度条 (历史百分位)
+    │   │       └── 买入策略文字建议
+    │   └── StepCompleteEvent
+    │
+    └── return {strategy_result: {...}, reasoning_steps}
+```
+
+#### Node 5: `logic_trace` (数据溯源)
 
 ```
 logic_trace_node(state, writer)
@@ -494,8 +577,19 @@ SSE 事件流时序 (共约 20 个事件):
     │  │                                       │  │ │ Terminal:  ─●─────── 3.0%       │  │
     │  │                                       │  │ │ [ Recalculate DCF ]              │  │
     │  │                                       │  │ └─────────────────────────────────┘  │
- 11 │  │ [Trace] Tracing data points...        │  │                                     │
- 12 │  │ [Trace] 70 points across 14 metrics   │  │ ┌─ SourceTable ──────────────────┐  │
+ 11 │  │ [Strategy] Fetching market price...   │  │                                     │
+ 12 │  │ [Strategy] Price $110.93 vs $220.36   │  │                                     │
+ 13 │  │ [Strategy] MoS 49.7%. Deep Value      │  │                                     │
+ 14 │  │ [Strategy] P/E 22.6 at 35th pctl      │  │ ┌─ StrategyDashboard ─────────────┐ │
+    │  │                                       │  │ │ [Deep Value]                     │ │
+    │  │                                       │  │ │ $110.93  |  $220.36  |  $187.31  │ │
+    │  │                                       │  │ │ ██████████████▌░░░░░░░ 温度计    │ │
+    │  │                                       │  │ │ MoS +49.7%    Upside +98.7%     │ │
+    │  │                                       │  │ │ P/E 22.6x ████░░░░ 35th pctl    │ │
+    │  │                                       │  │ │ "深度价值区, 当前价格远低于..."    │ │
+    │  │                                       │  │ └─────────────────────────────────┘ │
+ 15 │  │ [Trace] Tracing data points...        │  │                                     │
+ 16 │  │ [Trace] 70 points across 14 metrics   │  │ ┌─ SourceTable ──────────────────┐  │
     │  │                                       │  │ │ Revenue    $215.9B 2025  10-K ↗ │  │
     │  │                                       │  │ │ Net Income $120.1B 2025  10-K ↗ │  │
     │  │                                       │  │ │ ...                              │  │
@@ -545,7 +639,11 @@ SSE 事件流时序 (共约 20 个事件):
     └── analysis-layout.tsx: setUpdatedComponents(...)
         ├── 更新 dcf_result_card: 新内在价值
         ├── 更新 valuation_gauge: 新仪表数值
-        └── 更新 fcf_chart: 新预测柱状图
+        ├── 更新 fcf_chart: 新预测柱状图
+        └── 更新 strategy_dashboard: 前端重算安全边际/信号/建议买入价
+            ├── mosPct = (newIntrinsic - currentPrice) / newIntrinsic × 100
+            ├── signal 阈值与后端 _determine_signal 一致
+            ├── P/E 分位数不变 (不依赖 DCF 假设)
             └── 无需重新建立 SSE 连接, 页面局部刷新
 ```
 
@@ -602,10 +700,13 @@ fcf_chart               → FCFChart (Recharts)     ← dcf_model 节点
 dcf_result_card         → DCFResultCard           ← dcf_model 节点
 valuation_gauge         → ValuationGauge          ← dcf_model 节点
 assumption_slider       → AssumptionSlider        ← dcf_model 节点
+strategy_dashboard      → StrategyDashboard       ← strategy 节点
 source_table            → SourceTable             ← logic_trace 节点
 ```
 
 所有组件通过 `React.lazy()` 懒加载, 配合 `<Suspense fallback={<Skeleton/>}>` 渲染。
+
+> **注**: `strategy_dashboard` 在用户调整 DCF 假设时, 由前端直接重算安全边际/信号 (无需请求后端), 保持与 DCF 卡片的数据一致性。
 
 ### 4.4 Frontend Data Flow
 
@@ -619,7 +720,7 @@ useAnalysisStream (拆分为 thinkingMessages / components / verdict)
 AnalysisLayout
     ├── AgentTerminal ← thinkingMessages[]
     │   └── TypewriterText (逐字显示, 15ms/字, requestAnimationFrame)
-    │       └── node 颜色标签: 蓝(SEC) 绿(Health) 黄(DCF) 紫(Trace)
+    │       └── node 颜色标签: 蓝(SEC) 绿(Health) 黄(DCF) 玫红(Strategy) 紫(Trace)
     │
     └── Visualizer ← components[]
         └── 遍历 ComponentInstruction[]
@@ -700,9 +801,10 @@ AnalysisState (TypedDict)
 ├── health_metrics: dict | None         # Node 2 填充
 ├── health_assessment: str | None       # Node 2 填充 ("Strong")
 ├── dcf_result: dict | None             # Node 3 填充
-├── source_map: dict | None             # Node 4 填充
+├── strategy_result: dict | None        # Node 4 填充 (安全边际/P/E/信号)
+├── source_map: dict | None             # Node 5 填充
 ├── reasoning_steps: list[str]          # 所有节点追加 (Annotated[list, add])
-└── verdict: str | None                 # Node 4 填充
+└── verdict: str | None                 # Node 5 填充
 ```
 
 ---
@@ -734,7 +836,22 @@ AnalysisState (TypedDict)
 
 **解决**: `POST /api/recalculate-dcf` 从内存缓存读取 `CompanyFinancials` (30分钟 TTL), 只重算 `compute_dcf()`, 毫秒级返回。前端局部更新 3 个组件 (dcf_result_card, valuation_gauge, fcf_chart)。
 
-### 6.5 Lazy Component Registry
+### 6.5 FMP API 作为市场数据源 & 优雅降级
+
+**问题**: DCF 计算的内在价值需要与实时市场价格对比, 才能给出买入建议。但项目原本只有 SEC EDGAR 基本面数据, 没有股价来源。
+
+**选型**: Financial Modeling Prep (FMP) 免费 API, 通过现有 `httpx` 调用, 零新增依赖。
+- 对比 `yfinance`: 会引入 pandas/numpy 重型依赖, 且为同步库, 与项目全 async 架构冲突
+- 对比 Yahoo Finance 直连: 无官方 API, 端点频繁变更, 不稳定
+- FMP 免费层: 250 请求/天, 每次分析消耗 2 次调用 (实时价格 + 历史行情), 足够 MVP
+
+**降级策略**: `strategy` 节点设计为完全可选, 不阻塞主分析流程:
+- API Key 未设置 (`AQ_FMP_API_KEY=""`) → `get_current_price()` 返回 None → 节点跳过, 不发射组件
+- FMP 超时/错误 → 内部 try/except 捕获, 返回 None → 同上
+- 节点 `ErrorEvent(recoverable=True)` → SSE 连接不关闭, 后续 `logic_trace` 正常执行
+- 最终效果: 用户正常看到 DCF 估值, 只是没有策略仪表盘
+
+### 6.6 Lazy Component Registry
 
 **原因**: Recharts 是重型图表库。8 个分析组件全部 `React.lazy()` 加载, 初始页面 bundle 不包含图表代码。组件按 SSE 事件到达顺序按需加载。
 
@@ -769,11 +886,17 @@ Response: `text/event-stream`
 18. event: component        {component_type: "valuation_gauge", props: {...}}
 19. event: component        {component_type: "assumption_slider", props: {...}}
 20. event: step_complete    {node: "dynamic_dcf", summary: "..."}
-21. event: agent_thinking   {node: "logic_trace", content: "Tracing..."}
-22. event: agent_thinking   {node: "logic_trace", content: "Traced 70 data points..."}
-23. event: component        {component_type: "source_table", props: {...}}
-24. event: step_complete    {node: "logic_trace", summary: "..."}
-25. event: analysis_complete {verdict: "...", ticker: "NVDA"}
+21. event: agent_thinking   {node: "strategy", content: "Fetching current market price..."}
+22. event: agent_thinking   {node: "strategy", content: "Price $110.93 vs intrinsic $220.36..."}
+23. event: agent_thinking   {node: "strategy", content: "Computing historical P/E percentile..."}
+24. event: agent_thinking   {node: "strategy", content: "Current P/E 22.6 at 35th percentile..."}
+25. event: component        {component_type: "strategy_dashboard", props: {...}}
+26. event: step_complete    {node: "strategy", summary: "..."}
+27. event: agent_thinking   {node: "logic_trace", content: "Tracing..."}
+28. event: agent_thinking   {node: "logic_trace", content: "Traced 70 data points..."}
+29. event: component        {component_type: "source_table", props: {...}}
+30. event: step_complete    {node: "logic_trace", summary: "..."}
+31. event: analysis_complete {verdict: "...", ticker: "NVDA"}
 ```
 
 ### `POST /api/recalculate-dcf`
@@ -817,6 +940,11 @@ SEC API 429 (限速)          sec_client._rate_limit() 自动等待    用户无
 XBRL 标签不存在              字段返回空列表, 节点继续执行          指标显示 "N/A"
 FCF 数据不足                 dcf_node 返回 None, 跳过图表         无 DCF 卡片
 利息/负债数据缺失            WACC 回退到全权益模型                 正常显示
+FMP API Key 未设置           strategy 节点跳过                    无策略仪表盘
+FMP API 超时/5xx            get_current_price 返回 None          无策略仪表盘
+FMP 返回未知 ticker          响应为空列表, 返回 None              无策略仪表盘
+EPS 为负 (亏损公司)          P/E 分位数跳过, 仅显示安全边际       无 P/E 区域
+strategy 节点异常            ErrorEvent(recoverable=True)         无策略仪表盘, 分析继续
 重算时缓存过期 (30min)       HTTP 404 + 错误提示                  需要重新分析
 ```
 
@@ -828,6 +956,7 @@ FCF 数据不足                 dcf_node 返回 None, 跳过图表         无 
 # Terminal 1: Backend
 cd backend
 source .venv/bin/activate
+export AQ_FMP_API_KEY="your_fmp_api_key"   # 可选: 启用策略分析 (免费注册: financialmodelingprep.com)
 uvicorn backend.main:app --reload --port 8000
 
 # Terminal 2: Frontend
@@ -837,4 +966,6 @@ npm run dev
 ```
 
 输入 Ticker (如 NVDA), 观察左侧 Agent 推理链实时展示, 右侧组件逐个挂载。
-分析完成后拖动滑块调整假设参数, 点击重算即时看到估值变化。
+分析完成后拖动滑块调整假设参数, 点击重算即时看到估值变化 (策略仪表盘同步更新)。
+
+> **注**: 未设置 `AQ_FMP_API_KEY` 时, 策略分析 (安全边际/P/E 分位) 自动跳过, 其余功能正常。

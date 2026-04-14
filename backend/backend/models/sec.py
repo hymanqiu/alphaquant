@@ -10,8 +10,8 @@ class SECFactEntry(BaseModel):
     end: str
     val: int | float
     accn: str
-    fy: int
-    fp: str
+    fy: int | None = None
+    fp: str | None = None
     form: str
     filed: str
     frame: str | None = None

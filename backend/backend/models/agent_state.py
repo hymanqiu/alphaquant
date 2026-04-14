@@ -19,6 +19,8 @@ class AnalysisState(TypedDict):
     health_assessment: str | None
     # DCF
     dcf_result: dict[str, Any] | None
+    # Strategy
+    strategy_result: dict[str, Any] | None
     # Source tracing
     source_map: dict[str, Any] | None
     # Reasoning chain (append-only via operator.add)
