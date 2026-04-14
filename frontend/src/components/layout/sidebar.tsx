@@ -3,10 +3,11 @@
 import { useHistory } from "@/context/history-context";
 import { Plus, TrendingUp, Check, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { HistoryEntry } from "@/lib/types";
 
 interface SidebarProps {
-  currentTicker: string | null;
-  onSelectTicker: (ticker: string) => void;
+  activeEntryId: string | null;
+  onSelectHistory: (entry: HistoryEntry) => void;
   onNewAnalysis: () => void;
 }
 
@@ -33,8 +34,8 @@ function formatTime(timestamp: number): string {
 }
 
 export function Sidebar({
-  currentTicker,
-  onSelectTicker,
+  activeEntryId,
+  onSelectHistory,
   onNewAnalysis,
 }: SidebarProps) {
   const { entries } = useHistory();
@@ -78,9 +79,9 @@ export function Sidebar({
           {entries.map((entry) => (
             <button
               key={entry.id}
-              onClick={() => onSelectTicker(entry.ticker)}
+              onClick={() => onSelectHistory(entry)}
               className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left transition-colors ${
-                currentTicker === entry.ticker
+                activeEntryId === entry.id
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
               }`}

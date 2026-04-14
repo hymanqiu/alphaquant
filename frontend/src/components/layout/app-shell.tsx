@@ -1,49 +1,251 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ConversationPanel } from "@/components/conversation-panel";
 import { AnalysisCanvas } from "@/components/analysis-canvas";
 import { useAnalysisStream } from "@/hooks/use-analysis-stream";
 import { useHistory } from "@/context/history-context";
 import { API_BASE_URL } from "@/lib/constants";
-import type { ComponentInstruction } from "@/lib/types";
+import type {
+  AnalysisStep,
+  ComponentInstruction,
+  HistoryEntry,
+  SSEStatus,
+  ThinkingMessage,
+} from "@/lib/types";
 
 interface AppShellProps {
   initialTicker?: string;
 }
 
+interface CachedAnalysis {
+  thinkingMessages: ThinkingMessage[];
+  components: ComponentInstruction[];
+  steps: AnalysisStep[];
+  verdict: string | null;
+}
+
+const EMPTY_MESSAGES: ThinkingMessage[] = [];
+const EMPTY_COMPONENTS: ComponentInstruction[] = [];
+const EMPTY_STEPS: AnalysisStep[] = [];
+
 export function AppShell({ initialTicker }: AppShellProps) {
   const [ticker, setTicker] = useState<string | null>(
     initialTicker?.toUpperCase() ?? null
   );
-  const { status, thinkingMessages, components, steps, verdict, error } =
-    useAnalysisStream(ticker);
-  const [updatedComponents, setUpdatedComponents] = useState<
-    ComponentInstruction[]
-  >([]);
+  // isLive = true means a new SSE analysis is running; false = viewing cache or idle
+  const [isLive, setIsLive] = useState(!!initialTicker);
+
+  // SSE connection — only active when isLive && ticker is set
+  const liveTicker = isLive ? ticker : null;
+  const stream = useAnalysisStream(liveTicker);
+
+  // --- Fix 1: In-memory cache for completed analyses ---
+  const cacheRef = useRef(new Map<string, CachedAnalysis>());
+  const [cachedView, setCachedView] = useState<CachedAnalysis | null>(null);
+
+  // --- Fix 2: Raw recalc result, applied via useMemo (no stale closure) ---
+  const [recalcResult, setRecalcResult] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+
+  // History tracking
   const { addEntry, updateEntry } = useHistory();
   const entryIdRef = useRef<string | null>(null);
+  const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
 
-  const displayComponents =
-    updatedComponents.length > 0 ? updatedComponents : components;
+  // --- Fix 3: statusRef so callbacks always see current status ---
+  const statusRef = useRef(stream.status);
+  statusRef.current = stream.status;
 
-  // Track history entry
+  // ── Derived display values (live vs cached) ──
+
+  const displayStatus: SSEStatus = isLive
+    ? stream.status
+    : cachedView
+      ? "complete"
+      : "idle";
+
+  const displayThinkingMessages = isLive
+    ? stream.thinkingMessages
+    : cachedView?.thinkingMessages ?? EMPTY_MESSAGES;
+
+  const displaySteps = isLive
+    ? stream.steps
+    : cachedView?.steps ?? EMPTY_STEPS;
+
+  const displayVerdict = isLive
+    ? stream.verdict
+    : cachedView?.verdict ?? null;
+
+  const displayError = isLive ? stream.error : null;
+
+  const baseComponents = isLive
+    ? stream.components
+    : cachedView?.components ?? EMPTY_COMPONENTS;
+
+  // Fix 2: Apply recalc overrides via useMemo — always on top of latest baseComponents
+  const displayComponents = useMemo(() => {
+    if (!recalcResult) return baseComponents;
+
+    return baseComponents.map((comp) => {
+      switch (comp.component_type) {
+        case "dcf_result_card":
+          return {
+            ...comp,
+            props: {
+              ...comp.props,
+              intrinsic_value_per_share:
+                recalcResult.intrinsic_value_per_share,
+              enterprise_value: recalcResult.enterprise_value,
+              terminal_value: recalcResult.terminal_value,
+              pv_fcf_sum: recalcResult.pv_fcf_sum,
+              assumptions: recalcResult.assumptions,
+            },
+          };
+        case "valuation_gauge":
+          return {
+            ...comp,
+            props: {
+              ...comp.props,
+              intrinsic_value: recalcResult.intrinsic_value_per_share,
+            },
+          };
+        case "fcf_chart":
+          return {
+            ...comp,
+            props: { ...comp.props, data: recalcResult.chart_data },
+          };
+        case "strategy_dashboard": {
+          const iv = recalcResult.intrinsic_value_per_share as number | null;
+          if (iv == null || iv <= 0) return comp;
+          const cp = comp.props.current_price as number;
+          const mosPct = ((iv - cp) / iv) * 100;
+          const upside = ((iv - cp) / cp) * 100;
+          const suggestedEntry = iv * 0.85;
+          let signal: string;
+          if (mosPct > 25) signal = "Deep Value";
+          else if (mosPct > 10) signal = "Undervalued";
+          else if (mosPct > -10) signal = "Fair Value";
+          else signal = "Overvalued";
+          return {
+            ...comp,
+            props: {
+              ...comp.props,
+              intrinsic_value: iv,
+              margin_of_safety_pct: Math.round(mosPct * 10) / 10,
+              suggested_entry_price: Math.round(suggestedEntry * 100) / 100,
+              upside_pct: Math.round(upside * 10) / 10,
+              signal,
+            },
+          };
+        }
+        default:
+          return comp;
+      }
+    });
+  }, [baseComponents, recalcResult]);
+
+  // ── History entry lifecycle ──
+
+  // Create history entry when live analysis starts connecting
   useEffect(() => {
-    if (ticker && status === "connecting" && !entryIdRef.current) {
-      entryIdRef.current = addEntry(ticker);
+    if (isLive && ticker && stream.status === "connecting" && !entryIdRef.current) {
+      const id = addEntry(ticker);
+      entryIdRef.current = id;
+      setActiveEntryId(id);
     }
-  }, [ticker, status, addEntry]);
+  }, [isLive, ticker, stream.status, addEntry]);
 
+  // Update history entry + cache result when live analysis completes or errors
   useEffect(() => {
-    if (!entryIdRef.current) return;
-    if (status === "complete") {
-      updateEntry(entryIdRef.current, { status: "complete", verdict: verdict ?? undefined });
-    } else if (status === "error") {
+    if (!entryIdRef.current || !isLive) return;
+    if (stream.status === "complete") {
+      updateEntry(entryIdRef.current, {
+        status: "complete",
+        verdict: stream.verdict ?? undefined,
+      });
+      // Cache the completed result
+      cacheRef.current.set(entryIdRef.current, {
+        thinkingMessages: stream.thinkingMessages,
+        components: stream.components,
+        steps: stream.steps,
+        verdict: stream.verdict,
+      });
+    } else if (stream.status === "error") {
       updateEntry(entryIdRef.current, { status: "error" });
     }
-  }, [status, verdict, updateEntry]);
+  }, [
+    isLive,
+    stream.status,
+    stream.verdict,
+    stream.thinkingMessages,
+    stream.components,
+    stream.steps,
+    updateEntry,
+  ]);
 
+  // Fix 3: Clean up a previous entry that's still "running" before switching
+  const cleanupPrevious = useCallback(() => {
+    if (
+      entryIdRef.current &&
+      (statusRef.current === "connecting" || statusRef.current === "connected")
+    ) {
+      updateEntry(entryIdRef.current, { status: "error" });
+    }
+  }, [updateEntry]);
+
+  // ── User actions ──
+
+  // Start a brand-new live analysis (from input bar or re-analyze)
+  const handleSubmitTicker = useCallback(
+    (t: string) => {
+      cleanupPrevious();
+      setTicker(t.toUpperCase());
+      setIsLive(true);
+      setCachedView(null);
+      setRecalcResult(null);
+      entryIdRef.current = null;
+      setActiveEntryId(null);
+    },
+    [cleanupPrevious]
+  );
+
+  // Fix 1: Click a sidebar history entry — restore from cache if available
+  const handleSelectHistory = useCallback(
+    (entry: HistoryEntry) => {
+      const cached = cacheRef.current.get(entry.id);
+      if (cached && entry.status === "complete") {
+        // Restore cached result without SSE
+        cleanupPrevious();
+        setTicker(entry.ticker);
+        setIsLive(false);
+        setCachedView(cached);
+        setRecalcResult(null);
+        entryIdRef.current = entry.id;
+        setActiveEntryId(entry.id);
+      } else {
+        // No cache — re-analyze
+        handleSubmitTicker(entry.ticker);
+      }
+    },
+    [cleanupPrevious, handleSubmitTicker]
+  );
+
+  // Reset to empty state
+  const handleNewAnalysis = useCallback(() => {
+    cleanupPrevious();
+    setTicker(null);
+    setIsLive(false);
+    setCachedView(null);
+    setRecalcResult(null);
+    entryIdRef.current = null;
+    setActiveEntryId(null);
+  }, [cleanupPrevious]);
+
+  // Fix 2: Recalculate handler — no dependencies on components (no stale closure)
   const handleRecalculate = useCallback(
     async (data: Record<string, unknown>) => {
       try {
@@ -53,112 +255,36 @@ export function AppShell({ initialTicker }: AppShellProps) {
           body: JSON.stringify(data),
         });
         if (!resp.ok) return;
-        const result = await resp.json();
-
-        setUpdatedComponents(
-          components.map((comp) => {
-            if (comp.component_type === "dcf_result_card") {
-              return {
-                ...comp,
-                props: {
-                  ...comp.props,
-                  intrinsic_value_per_share: result.intrinsic_value_per_share,
-                  enterprise_value: result.enterprise_value,
-                  terminal_value: result.terminal_value,
-                  pv_fcf_sum: result.pv_fcf_sum,
-                  assumptions: result.assumptions,
-                },
-              };
-            }
-            if (comp.component_type === "valuation_gauge") {
-              return {
-                ...comp,
-                props: {
-                  ...comp.props,
-                  intrinsic_value: result.intrinsic_value_per_share,
-                },
-              };
-            }
-            if (comp.component_type === "fcf_chart") {
-              return {
-                ...comp,
-                props: { ...comp.props, data: result.chart_data },
-              };
-            }
-            if (
-              comp.component_type === "strategy_dashboard" &&
-              result.intrinsic_value_per_share != null &&
-              result.intrinsic_value_per_share > 0
-            ) {
-              const newIntrinsic = result.intrinsic_value_per_share as number;
-              const currentPrice = comp.props.current_price as number;
-              const mosPct =
-                ((newIntrinsic - currentPrice) / newIntrinsic) * 100;
-              const upside =
-                ((newIntrinsic - currentPrice) / currentPrice) * 100;
-              const suggestedEntry = newIntrinsic * 0.85;
-              let signal: string;
-              if (mosPct > 25) signal = "Deep Value";
-              else if (mosPct > 10) signal = "Undervalued";
-              else if (mosPct > -10) signal = "Fair Value";
-              else signal = "Overvalued";
-              return {
-                ...comp,
-                props: {
-                  ...comp.props,
-                  intrinsic_value: newIntrinsic,
-                  margin_of_safety_pct: Math.round(mosPct * 10) / 10,
-                  suggested_entry_price:
-                    Math.round(suggestedEntry * 100) / 100,
-                  upside_pct: Math.round(upside * 10) / 10,
-                  signal,
-                },
-              };
-            }
-            return comp;
-          })
-        );
+        setRecalcResult(await resp.json());
       } catch {
         // Silently fail — original components remain
       }
     },
-    [components]
+    []
   );
-
-  const handleSubmitTicker = useCallback((t: string) => {
-    setTicker(t.toUpperCase());
-    setUpdatedComponents([]);
-    entryIdRef.current = null;
-  }, []);
-
-  const handleNewAnalysis = useCallback(() => {
-    setTicker(null);
-    setUpdatedComponents([]);
-    entryIdRef.current = null;
-  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
-        currentTicker={ticker}
-        onSelectTicker={handleSubmitTicker}
+        activeEntryId={activeEntryId}
+        onSelectHistory={handleSelectHistory}
         onNewAnalysis={handleNewAnalysis}
       />
       <div className="flex flex-1 overflow-hidden">
         <ConversationPanel
           ticker={ticker}
-          status={status}
-          steps={steps}
-          thinkingMessages={thinkingMessages}
-          verdict={verdict}
-          error={error}
+          status={displayStatus}
+          steps={displaySteps}
+          thinkingMessages={displayThinkingMessages}
+          verdict={displayVerdict}
+          error={displayError}
           onSubmitTicker={handleSubmitTicker}
         />
         <AnalysisCanvas
           ticker={ticker}
           components={displayComponents}
           onRecalculate={handleRecalculate}
-          status={status}
+          status={displayStatus}
         />
       </div>
     </div>
