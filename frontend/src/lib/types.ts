@@ -49,6 +49,23 @@ export type SSEEventData =
   | AnalysisCompleteEvent
   | ErrorEvent;
 
+export type StepStatus = "pending" | "active" | "done";
+
+export interface AnalysisStep {
+  node: string;
+  label: string;
+  status: StepStatus;
+  summary?: string;
+}
+
+export interface HistoryEntry {
+  id: string;
+  ticker: string;
+  timestamp: number;
+  status: "running" | "complete" | "error";
+  verdict?: string;
+}
+
 export interface DCFRecalculateRequest {
   ticker: string;
   growth_rate: number;

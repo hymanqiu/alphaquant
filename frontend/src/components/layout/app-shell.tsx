@@ -1,26 +1,48 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { AgentTerminal } from "@/components/agent-terminal";
-import { Visualizer } from "@/components/visualizer";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Sidebar } from "@/components/layout/sidebar";
+import { ConversationPanel } from "@/components/conversation-panel";
+import { AnalysisCanvas } from "@/components/analysis-canvas";
 import { useAnalysisStream } from "@/hooks/use-analysis-stream";
+import { useHistory } from "@/context/history-context";
 import { API_BASE_URL } from "@/lib/constants";
 import type { ComponentInstruction } from "@/lib/types";
 
-interface AnalysisLayoutProps {
-  ticker: string;
+interface AppShellProps {
+  initialTicker?: string;
 }
 
-export function AnalysisLayout({ ticker }: AnalysisLayoutProps) {
-  const { status, thinkingMessages, components, verdict, error } =
+export function AppShell({ initialTicker }: AppShellProps) {
+  const [ticker, setTicker] = useState<string | null>(
+    initialTicker?.toUpperCase() ?? null
+  );
+  const { status, thinkingMessages, components, steps, verdict, error } =
     useAnalysisStream(ticker);
   const [updatedComponents, setUpdatedComponents] = useState<
     ComponentInstruction[]
   >([]);
+  const { addEntry, updateEntry } = useHistory();
+  const entryIdRef = useRef<string | null>(null);
 
   const displayComponents =
     updatedComponents.length > 0 ? updatedComponents : components;
+
+  // Track history entry
+  useEffect(() => {
+    if (ticker && status === "connecting" && !entryIdRef.current) {
+      entryIdRef.current = addEntry(ticker);
+    }
+  }, [ticker, status, addEntry]);
+
+  useEffect(() => {
+    if (!entryIdRef.current) return;
+    if (status === "complete") {
+      updateEntry(entryIdRef.current, { status: "complete", verdict: verdict ?? undefined });
+    } else if (status === "error") {
+      updateEntry(entryIdRef.current, { status: "error" });
+    }
+  }, [status, verdict, updateEntry]);
 
   const handleRecalculate = useCallback(
     async (data: Record<string, unknown>) => {
@@ -33,7 +55,6 @@ export function AnalysisLayout({ ticker }: AnalysisLayoutProps) {
         if (!resp.ok) return;
         const result = await resp.json();
 
-        // Update the DCF-related components in-place
         setUpdatedComponents(
           components.map((comp) => {
             if (comp.component_type === "dcf_result_card") {
@@ -61,10 +82,7 @@ export function AnalysisLayout({ ticker }: AnalysisLayoutProps) {
             if (comp.component_type === "fcf_chart") {
               return {
                 ...comp,
-                props: {
-                  ...comp.props,
-                  data: result.chart_data,
-                },
+                props: { ...comp.props, data: result.chart_data },
               };
             }
             if (
@@ -90,7 +108,8 @@ export function AnalysisLayout({ ticker }: AnalysisLayoutProps) {
                   ...comp.props,
                   intrinsic_value: newIntrinsic,
                   margin_of_safety_pct: Math.round(mosPct * 10) / 10,
-                  suggested_entry_price: Math.round(suggestedEntry * 100) / 100,
+                  suggested_entry_price:
+                    Math.round(suggestedEntry * 100) / 100,
                   upside_pct: Math.round(upside * 10) / 10,
                   signal,
                 },
@@ -100,46 +119,47 @@ export function AnalysisLayout({ ticker }: AnalysisLayoutProps) {
           })
         );
       } catch {
-        // Silently fail - the original components remain
+        // Silently fail — original components remain
       }
     },
     [components]
   );
 
-  const isActive = status === "connecting" || status === "connected";
+  const handleSubmitTicker = useCallback((t: string) => {
+    setTicker(t.toUpperCase());
+    setUpdatedComponents([]);
+    entryIdRef.current = null;
+  }, []);
+
+  const handleNewAnalysis = useCallback(() => {
+    setTicker(null);
+    setUpdatedComponents([]);
+    entryIdRef.current = null;
+  }, []);
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
-      {/* Left: Agent Terminal */}
-      <div className="lg:w-2/5 h-64 lg:h-auto">
-        <AgentTerminal messages={thinkingMessages} isActive={isActive} />
-      </div>
-
-      {/* Right: Visualizer */}
-      <div className="lg:w-3/5 overflow-y-auto space-y-4">
-        {error && (
-          <div className="bg-destructive/10 text-destructive border border-destructive/20 rounded-lg p-4 text-sm">
-            {error}
-          </div>
-        )}
-
-        <Visualizer
+    <div className="flex h-screen overflow-hidden bg-background">
+      <Sidebar
+        currentTicker={ticker}
+        onSelectTicker={handleSubmitTicker}
+        onNewAnalysis={handleNewAnalysis}
+      />
+      <div className="flex flex-1 overflow-hidden">
+        <ConversationPanel
+          ticker={ticker}
+          status={status}
+          steps={steps}
+          thinkingMessages={thinkingMessages}
+          verdict={verdict}
+          error={error}
+          onSubmitTicker={handleSubmitTicker}
+        />
+        <AnalysisCanvas
+          ticker={ticker}
           components={displayComponents}
           onRecalculate={handleRecalculate}
+          status={status}
         />
-
-        {verdict && (
-          <div className="bg-primary/5 border rounded-lg p-4 space-y-2">
-            <Badge variant="secondary">Analysis Complete</Badge>
-            <p className="text-sm">{verdict}</p>
-          </div>
-        )}
-
-        {isActive && components.length === 0 && (
-          <div className="text-center text-muted-foreground py-12">
-            Waiting for analysis results...
-          </div>
-        )}
       </div>
     </div>
   );
