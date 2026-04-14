@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ConversationPanel } from "@/components/conversation-panel";
 import { AnalysisCanvas } from "@/components/analysis-canvas";
+import { EmptyState } from "@/components/empty-state";
 import { useAnalysisStream } from "@/hooks/use-analysis-stream";
 import { useHistory } from "@/context/history-context";
 import { API_BASE_URL } from "@/lib/constants";
@@ -55,6 +56,9 @@ export function AppShell({ initialTicker }: AppShellProps) {
   const { addEntry, updateEntry } = useHistory();
   const entryIdRef = useRef<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
+
+  // Sidebar collapse
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // --- Fix 3: statusRef so callbacks always see current status ---
   const statusRef = useRef(stream.status);
@@ -269,23 +273,31 @@ export function AppShell({ initialTicker }: AppShellProps) {
         activeEntryId={activeEntryId}
         onSelectHistory={handleSelectHistory}
         onNewAnalysis={handleNewAnalysis}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
       />
       <div className="flex flex-1 overflow-hidden">
-        <ConversationPanel
-          ticker={ticker}
-          status={displayStatus}
-          steps={displaySteps}
-          thinkingMessages={displayThinkingMessages}
-          verdict={displayVerdict}
-          error={displayError}
-          onSubmitTicker={handleSubmitTicker}
-        />
-        <AnalysisCanvas
-          ticker={ticker}
-          components={displayComponents}
-          onRecalculate={handleRecalculate}
-          status={displayStatus}
-        />
+        {ticker === null ? (
+          <EmptyState onSubmit={handleSubmitTicker} />
+        ) : (
+          <>
+            <ConversationPanel
+              ticker={ticker}
+              status={displayStatus}
+              steps={displaySteps}
+              thinkingMessages={displayThinkingMessages}
+              verdict={displayVerdict}
+              error={displayError}
+              onSubmitTicker={handleSubmitTicker}
+            />
+            <AnalysisCanvas
+              ticker={ticker}
+              components={displayComponents}
+              onRecalculate={handleRecalculate}
+              status={displayStatus}
+            />
+          </>
+        )}
       </div>
     </div>
   );

@@ -1,14 +1,25 @@
 "use client";
 
 import { useHistory } from "@/context/history-context";
-import { Plus, TrendingUp, Check, Loader2, AlertCircle } from "lucide-react";
+import {
+  Plus,
+  TrendingUp,
+  Check,
+  Loader2,
+  AlertCircle,
+  PanelLeft,
+  PanelLeftClose,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { HistoryEntry } from "@/lib/types";
 
 interface SidebarProps {
   activeEntryId: string | null;
   onSelectHistory: (entry: HistoryEntry) => void;
   onNewAnalysis: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -37,66 +48,119 @@ export function Sidebar({
   activeEntryId,
   onSelectHistory,
   onNewAnalysis,
+  collapsed,
+  onToggleCollapse,
 }: SidebarProps) {
   const { entries } = useHistory();
 
   return (
-    <aside className="w-[260px] shrink-0 border-r bg-sidebar flex flex-col h-full">
-      {/* Brand */}
-      <div className="px-4 py-4 border-b">
-        <div className="flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-primary" />
-          <span className="font-bold text-lg">AlphaQuant</span>
+    <aside
+      className={cn(
+        "shrink-0 border-r bg-sidebar flex flex-col h-full transition-all duration-300 ease-in-out overflow-hidden",
+        collapsed ? "w-[60px]" : "w-[260px]"
+      )}
+    >
+      {/* Brand + Toggle */}
+      <div className="px-3 py-4 border-b">
+        <div className="flex items-center justify-between">
+          <div
+            className={cn(
+              "flex items-center gap-2 min-w-0",
+              collapsed && "justify-center w-full"
+            )}
+          >
+            <TrendingUp className="h-5 w-5 text-primary shrink-0" />
+            {!collapsed && (
+              <span className="font-bold text-lg whitespace-nowrap">
+                AlphaQuant
+              </span>
+            )}
+          </div>
+          {!collapsed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              onClick={onToggleCollapse}
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </Button>
+          )}
         </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          AI Investment Research
-        </p>
+        {!collapsed && (
+          <p className="text-xs text-muted-foreground mt-1">
+            AI Investment Research
+          </p>
+        )}
+        {collapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 mx-auto mt-2"
+            onClick={onToggleCollapse}
+          >
+            <PanelLeft className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       {/* New Analysis */}
       <div className="px-3 py-3">
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-2"
-          onClick={onNewAnalysis}
-        >
-          <Plus className="h-4 w-4" />
-          New Analysis
-        </Button>
+        {collapsed ? (
+          <Button
+            variant="outline"
+            size="icon"
+            className="mx-auto flex"
+            onClick={onNewAnalysis}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-2"
+            onClick={onNewAnalysis}
+          >
+            <Plus className="h-4 w-4" />
+            New Analysis
+          </Button>
+        )}
       </div>
 
       {/* History */}
-      <div className="flex-1 overflow-y-auto px-2">
-        <p className="px-2 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          History
-        </p>
-        {entries.length === 0 && (
-          <p className="px-2 py-4 text-xs text-muted-foreground text-center">
-            No analyses yet
+      {!collapsed && (
+        <div className="flex-1 overflow-y-auto px-2">
+          <p className="px-2 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            History
           </p>
-        )}
-        <div className="space-y-0.5">
-          {entries.map((entry) => (
-            <button
-              key={entry.id}
-              onClick={() => onSelectHistory(entry)}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left transition-colors ${
-                activeEntryId === entry.id
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
-              }`}
-            >
-              <span className="font-mono font-medium shrink-0">
-                {entry.ticker}
-              </span>
-              <span className="flex-1 text-xs text-muted-foreground truncate">
-                {formatTime(entry.timestamp)}
-              </span>
-              <StatusIcon status={entry.status} />
-            </button>
-          ))}
+          {entries.length === 0 && (
+            <p className="px-2 py-4 text-xs text-muted-foreground text-center">
+              No analyses yet
+            </p>
+          )}
+          <div className="space-y-0.5">
+            {entries.map((entry) => (
+              <button
+                key={entry.id}
+                onClick={() => onSelectHistory(entry)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left transition-colors ${
+                  activeEntryId === entry.id
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
+                }`}
+              >
+                <span className="font-mono font-medium shrink-0">
+                  {entry.ticker}
+                </span>
+                <span className="flex-1 text-xs text-muted-foreground truncate">
+                  {formatTime(entry.timestamp)}
+                </span>
+                <StatusIcon status={entry.status} />
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </aside>
   );
 }
