@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langgraph.types import StreamWriter
@@ -14,6 +15,8 @@ from backend.models.events import (
     StepCompleteEvent,
 )
 from backend.services.market_data import market_data_client
+
+logger = logging.getLogger(__name__)
 
 
 def _determine_signal(margin_of_safety_pct: float) -> str:
@@ -47,10 +50,12 @@ async def strategy_node(
         }
 
     try:
-        return await _run_strategy(financials, dcf, writer)
+        rel_val = state.get("relative_valuation_result")
+        return await _run_strategy(financials, dcf, rel_val, writer)
     except Exception as e:
+        logger.exception("Strategy analysis failed for %s", financials.ticker if financials else "unknown")
         writer(ErrorEvent(
-            message=f"Strategy analysis failed: {e}",
+            message="Strategy analysis encountered an internal error.",
             recoverable=True,
         ).model_dump())
         writer(StepCompleteEvent(
@@ -59,24 +64,31 @@ async def strategy_node(
         ).model_dump())
         return {
             "strategy_result": None,
-            "reasoning_steps": [f"Strategy: error — {e}"],
+            "reasoning_steps": ["Strategy: error — analysis interrupted"],
         }
 
 
 async def _run_strategy(
-    financials: Any, dcf: dict[str, Any], writer: StreamWriter
+    financials: Any, dcf: dict[str, Any],
+    relative_valuation_result: dict[str, Any] | None,
+    writer: StreamWriter,
 ) -> dict[str, Any]:
     intrinsic: float = dcf["intrinsic_value_per_share"]
     ticker = financials.ticker
     reasoning: list[str] = []
 
-    # --- Fetch current market price ---
+    # --- Get current market price (reuse from relative_valuation if available) ---
     writer(AgentThinkingEvent(
         node="strategy",
         content=f"Fetching current market price for {ticker}...",
     ).model_dump())
 
-    current_price = await market_data_client.get_current_price(ticker)
+    current_price: float | None = None
+    if relative_valuation_result and relative_valuation_result.get("price_available"):
+        current_price = relative_valuation_result.get("current_price")
+    if current_price is None or current_price <= 0:
+        current_price = await market_data_client.get_current_price(ticker)
+
     if current_price is None or current_price <= 0:
         writer(AgentThinkingEvent(
             node="strategy",
@@ -116,7 +128,11 @@ async def _run_strategy(
         content="Computing historical P/E percentile...",
     ).model_dump())
 
-    annual_prices = await market_data_client.get_annual_closing_prices(ticker, years=10)
+    annual_prices: dict[int, float] = {}
+    if relative_valuation_result and relative_valuation_result.get("annual_prices"):
+        annual_prices = relative_valuation_result["annual_prices"]
+    if not annual_prices:
+        annual_prices = await market_data_client.get_annual_closing_prices(ticker, years=10)
     eps_by_year = {m.calendar_year: m.value for m in financials.diluted_eps}
 
     historical_pe: list[dict[str, Any]] = []
@@ -155,6 +171,28 @@ async def _run_strategy(
             node="strategy",
             content="EPS is negative or unavailable — P/E percentile not computed.",
         ).model_dump())
+
+    # --- Relative valuation cross-check ---
+    relative_signal_note = ""
+    if relative_valuation_result and relative_valuation_result.get("price_available"):
+        peer_comp = relative_valuation_result.get("peer_comparison")
+        deltas = peer_comp.get("deltas", {}) if peer_comp and peer_comp.get("peer_data_available") else {}
+        pe_delta = deltas.get("pe")
+        if pe_delta is not None:
+            if pe_delta < -20:
+                relative_signal_note = "P/E significantly below peers, supporting undervaluation thesis."
+                reasoning.append(f"Relative valuation: {relative_signal_note}")
+            elif pe_delta > 20:
+                relative_signal_note = "P/E significantly above peers — valuation premium warrants caution."
+                reasoning.append(f"Relative valuation: {relative_signal_note}")
+            else:
+                reasoning.append("Relative valuation: P/E roughly in line with peers.")
+
+        if relative_signal_note:
+            writer(AgentThinkingEvent(
+                node="strategy",
+                content=relative_signal_note,
+            ).model_dump())
 
     # --- Emit strategy dashboard ---
     strategy_result = {

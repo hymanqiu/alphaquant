@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langgraph.types import StreamWriter
@@ -12,6 +13,8 @@ from langgraph.types import StreamWriter
 from backend.models.agent_state import AnalysisState
 from backend.models.events import AgentThinkingEvent, ComponentEvent, ErrorEvent, StepCompleteEvent
 from backend.models.financial import AnnualMetric
+
+logger = logging.getLogger(__name__)
 
 
 def _fcf_cagr(fcf: list[AnnualMetric], years: int = 3) -> float | None:
@@ -132,8 +135,9 @@ async def dcf_node(
     try:
         return _run_dcf(financials, writer)
     except Exception as e:
+        logger.exception("DCF modeling failed for %s", financials.ticker)
         writer(ErrorEvent(
-            message=f"DCF modeling failed: {e}",
+            message="DCF modeling encountered an internal error.",
             recoverable=False,
         ).model_dump())
         return {"dcf_result": None, "reasoning_steps": [f"ERROR: DCF failed - {e}"]}

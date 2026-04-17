@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException
@@ -12,6 +13,8 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from backend.agents.nodes.dcf_model import compute_dcf
 from backend.agents.value_analyst import build_value_analyst_graph
 from backend.api.dependencies import cache_financials, get_cached_financials
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -29,6 +32,7 @@ async def analyze_ticker(ticker: str) -> EventSourceResponse:
             "health_metrics": None,
             "health_assessment": None,
             "dcf_result": None,
+            "relative_valuation_result": None,
             "strategy_result": None,
             "source_map": None,
             "reasoning_steps": [],
@@ -51,10 +55,11 @@ async def analyze_ticker(ticker: str) -> EventSourceResponse:
                     if financials is not None:
                         cache_financials(ticker.upper(), financials)
         except Exception as e:
+            logger.exception("Analysis failed for %s", ticker)
             yield ServerSentEvent(
                 data=json.dumps({
                     "event": "error",
-                    "message": f"Analysis failed: {e}",
+                    "message": "Analysis failed due to an internal error. Please try again.",
                     "recoverable": False,
                 }),
                 event="error",
@@ -68,6 +73,14 @@ class DCFRecalculateRequest(BaseModel):
     growth_rate: float  # percentage, e.g. 15.0 for 15%
     terminal_growth_rate: float = 3.0
     discount_rate: float  # percentage
+
+    model_config = {"extra": "forbid"}
+
+    def model_post_init(self, __context: object) -> None:
+        if self.discount_rate <= self.terminal_growth_rate:
+            raise ValueError(
+                "discount_rate must be greater than terminal_growth_rate"
+            )
 
 
 @router.post("/api/recalculate-dcf")
