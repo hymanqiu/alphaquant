@@ -1,4 +1,17 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+
+def _find_env_file() -> Path:
+    """Locate .env by walking up from this file to the repo root."""
+    current = Path(__file__).resolve().parent
+    for _ in range(5):
+        candidate = current / ".env"
+        if candidate.exists():
+            return candidate
+        current = current.parent
+    return Path(".env")
 
 
 class Settings(BaseSettings):
@@ -10,7 +23,10 @@ class Settings(BaseSettings):
     fmp_api_key: str = ""
     fmp_base_url: str = "https://financialmodelingprep.com"
 
-    model_config = {"env_prefix": "AQ_"}
+    model_config = {
+        "env_prefix": "AQ_",
+        "env_file": str(_find_env_file()),
+    }
 
 
 settings = Settings()

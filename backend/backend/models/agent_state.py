@@ -19,6 +19,8 @@ class AnalysisState(TypedDict):
     health_assessment: str | None
     # DCF
     dcf_result: dict[str, Any] | None
+    # Relative valuation
+    relative_valuation_result: dict[str, Any] | None
     # Strategy
     strategy_result: dict[str, Any] | None
     # Source tracing

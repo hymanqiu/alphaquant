@@ -14,6 +14,7 @@ const PIPELINE_NODES = [
   { node: "fetch_sec_data", label: "Fetching SEC EDGAR Data" },
   { node: "financial_health_scan", label: "Analyzing Financial Health" },
   { node: "dynamic_dcf", label: "Building DCF Model" },
+  { node: "relative_valuation", label: "Comparing Market Multiples" },
   { node: "strategy", label: "Generating Entry Strategy" },
   { node: "logic_trace", label: "Tracing Data Sources" },
 ] as const;

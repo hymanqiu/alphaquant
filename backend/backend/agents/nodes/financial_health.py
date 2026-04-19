@@ -5,6 +5,7 @@ Computes key financial ratios and emits health assessment components.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langgraph.types import StreamWriter
@@ -12,6 +13,8 @@ from langgraph.types import StreamWriter
 from backend.models.agent_state import AnalysisState
 from backend.models.events import AgentThinkingEvent, ComponentEvent, ErrorEvent, StepCompleteEvent
 from backend.models.financial import AnnualMetric
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_divide(a: float, b: float) -> float | None:
@@ -80,8 +83,9 @@ async def financial_health_node(
     try:
         return _run_financial_health(financials, writer)
     except Exception as e:
+        logger.exception("Financial health scan failed for %s", financials.ticker)
         writer(ErrorEvent(
-            message=f"Financial health scan failed: {e}",
+            message="Financial health scan encountered an internal error.",
             recoverable=False,
         ).model_dump())
         return {"health_metrics": None, "health_assessment": None, "reasoning_steps": [f"ERROR: Financial health scan failed - {e}"]}
