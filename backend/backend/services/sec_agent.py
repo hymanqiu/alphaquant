@@ -51,6 +51,11 @@ TAG_MAP: dict[str, list[str]] = {
         "CommonStockSharesOutstanding",
     ],
     "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
+    "depreciation_and_amortization": [
+        "DepreciationDepletionAndAmortization",
+        "DepreciationAndAmortization",
+        "Depreciation",
+    ],
 }
 
 # Which unit to use for each metric

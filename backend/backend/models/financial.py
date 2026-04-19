@@ -37,3 +37,4 @@ class CompanyFinancials(BaseModel):
     diluted_eps: list[AnnualMetric] = []
     diluted_shares: list[AnnualMetric] = []
     cost_of_revenue: list[AnnualMetric] = []
+    depreciation_and_amortization: list[AnnualMetric] = []

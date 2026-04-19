@@ -46,6 +46,11 @@ interface RelativeValuationCardProps {
     peer_table?: PeerRow[];
     deltas?: Record<string, number | null>;
   } | null;
+  sector?: string | null;
+  industry?: string | null;
+  recommended_multiples?: string[];
+  industry_explanation?: string;
+  dividend_yield?: number | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -60,10 +65,17 @@ const MULTIPLE_LABELS: Record<string, string> = {
   ev_to_ebit: "EV/EBIT",
   ev_to_fcf: "EV/FCF",
   peg: "PEG",
+  p_ffo: "P/FFO",
+  dividend_yield: "Div Yield",
 };
 
-function formatValue(v: number | null | undefined): string {
+const MULTIPLE_TOOLTIPS: Record<string, string> = {
+  p_ffo: "Simplified FFO = Net Income + D&A (excludes property-sale gains)",
+};
+
+function formatValue(v: number | null | undefined, key?: string): string {
   if (v == null) return "N/A";
+  if (key === "dividend_yield") return v.toFixed(2) + "%";
   return v.toFixed(2) + "x";
 }
 
@@ -104,13 +116,23 @@ function CurrentMultiplesGrid({
   multiples,
   percentiles,
   deltas,
+  recommendedKeys,
 }: {
   multiples: Record<string, number | null>;
   percentiles: Record<string, number | null>;
   deltas: Record<string, number | null>;
+  recommendedKeys: Set<string>;
 }) {
   const entries = Object.entries(multiples).filter(
-    ([key]) => key in MULTIPLE_LABELS,
+    ([key, value]) => {
+      if (!(key in MULTIPLE_LABELS)) return false;
+      // Only show dividend_yield / p_ffo when they have a value —
+      // they are industry-specific and clutter the grid otherwise.
+      if ((key === "p_ffo" || key === "dividend_yield") && value == null) {
+        return false;
+      }
+      return true;
+    },
   );
 
   return (
@@ -118,17 +140,32 @@ function CurrentMultiplesGrid({
       {entries.map(([key, value]) => {
         const pct = percentiles[key];
         const delta = deltas[key];
+        const isRecommended = recommendedKeys.has(key);
+        const tooltip = MULTIPLE_TOOLTIPS[key];
         return (
           <div
             key={key}
-            className="p-3 rounded-md border bg-muted/30 space-y-1"
+            title={tooltip}
+            className={`p-3 rounded-md border bg-muted/30 space-y-1 relative ${
+              isRecommended ? "ring-2 ring-amber-400" : ""
+            }`}
           >
-            <p className="text-xs text-muted-foreground">
-              {MULTIPLE_LABELS[key]}
-            </p>
+            <div className="flex items-center justify-between gap-1">
+              <p className="text-xs text-muted-foreground">
+                {MULTIPLE_LABELS[key]}
+              </p>
+              {isRecommended && (
+                <Badge
+                  variant="outline"
+                  className="text-[9px] px-1 py-0 h-4 border-amber-400 text-amber-700 bg-amber-50"
+                >
+                  ★ Industry
+                </Badge>
+              )}
+            </div>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-mono font-bold">
-                {formatValue(value)}
+                {formatValue(value, key)}
               </span>
               {delta != null && (
                 <span
@@ -325,8 +362,13 @@ export default function RelativeValuationCard({
   historical_stats,
   percentiles,
   peer_comparison,
+  sector,
+  industry,
+  recommended_multiples,
+  industry_explanation,
 }: RelativeValuationCardProps) {
   const deltas = peer_comparison?.deltas ?? {};
+  const recommendedKeys = new Set(recommended_multiples ?? []);
 
   if (!price_available) {
     return (
@@ -335,6 +377,12 @@ export default function RelativeValuationCard({
           <CardTitle className="text-base">
             {entity_name} - Relative Valuation
           </CardTitle>
+          {sector && (
+            <p className="text-xs text-muted-foreground mt-1">
+              {sector}
+              {industry && ` · ${industry}`}
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
@@ -354,9 +402,17 @@ export default function RelativeValuationCard({
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">
-            {entity_name} - Relative Valuation
-          </CardTitle>
+          <div>
+            <CardTitle className="text-base">
+              {entity_name} - Relative Valuation
+            </CardTitle>
+            {sector && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {sector}
+                {industry && ` · ${industry}`}
+              </p>
+            )}
+          </div>
           <div className="flex gap-2 text-xs text-muted-foreground">
             {market_cap && (
               <span>MCap: {formatDollar(market_cap)}</span>
@@ -368,11 +424,35 @@ export default function RelativeValuationCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+        {/* Industry recommendation banner */}
+        {industry_explanation && recommendedKeys.size > 0 && (
+          <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-amber-900">
+                Recommended multiples for this industry:
+              </span>
+              {Array.from(recommendedKeys).map((k) => (
+                <Badge
+                  key={k}
+                  variant="outline"
+                  className="text-[10px] px-1.5 py-0 h-5 border-amber-400 text-amber-800 bg-white"
+                >
+                  ★ {MULTIPLE_LABELS[k] ?? k}
+                </Badge>
+              ))}
+            </div>
+            <p className="text-xs text-amber-900/80 leading-relaxed">
+              {industry_explanation}
+            </p>
+          </div>
+        )}
+
         {/* Section A — Current Multiples Grid */}
         <CurrentMultiplesGrid
           multiples={current_multiples}
           percentiles={percentiles}
           deltas={deltas}
+          recommendedKeys={recommendedKeys}
         />
 
         {/* Section B — Historical Percentile Bars */}

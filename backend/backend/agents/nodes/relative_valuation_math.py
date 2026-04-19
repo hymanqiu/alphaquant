@@ -45,9 +45,28 @@ def compute_earnings_cagr(eps: list[AnnualMetric], years: int = 3) -> float | No
     return (end / start) ** (1 / years) - 1
 
 
+def compute_ffo(
+    net_income: float | None, d_and_a: float | None
+) -> float | None:
+    """Simplified FFO = Net Income + D&A. Excludes property-sale gains."""
+    if net_income is None or d_and_a is None:
+        return None
+    return net_income + d_and_a
+
+
+def compute_dividend_yield(
+    last_dividend: float | None, current_price: float | None
+) -> float | None:
+    """Dividend yield as a percentage (e.g. 3.25 for 3.25%)."""
+    if not last_dividend or not current_price or current_price <= 0:
+        return None
+    return round(last_dividend / current_price * 100, 2)
+
+
 def compute_current_multiples(
     financials: Any,
     current_price: float,
+    last_dividend: float | None = None,
 ) -> dict[str, Any]:
     """Compute current market multiples from financials + live price."""
     shares = latest(financials.diluted_shares)
@@ -65,6 +84,7 @@ def compute_current_multiples(
     fcf = latest(financials.free_cash_flow)
     equity = latest(financials.stockholders_equity)
     eps = latest(financials.diluted_eps)
+    d_and_a = latest(getattr(financials, "depreciation_and_amortization", []) or [])
 
     multiples: dict[str, float | None] = {}
     multiples["pe"] = safe_divide(current_price, eps) if eps and eps > 0 else None
@@ -73,6 +93,11 @@ def compute_current_multiples(
     multiples["ev_to_revenue"] = safe_divide(ev, revenue) if revenue and revenue > 0 else None
     multiples["ev_to_ebit"] = safe_divide(ev, op_income) if op_income and op_income > 0 else None
     multiples["ev_to_fcf"] = safe_divide(ev, fcf) if fcf and fcf > 0 else None
+
+    ffo = compute_ffo(net_income, d_and_a)
+    multiples["p_ffo"] = safe_divide(market_cap, ffo) if ffo and ffo > 0 else None
+
+    multiples["dividend_yield"] = compute_dividend_yield(last_dividend, current_price)
 
     pe = multiples["pe"]
     earnings_growth = compute_earnings_cagr(financials.diluted_eps, years=3)
@@ -101,10 +126,13 @@ def compute_historical_multiples(
     equity_by_year = by_year(financials.stockholders_equity)
     debt_by_year = by_year(financials.long_term_debt)
     cash_by_year = by_year(financials.cash_and_equivalents)
+    da_by_year = by_year(
+        getattr(financials, "depreciation_and_amortization", []) or []
+    )
 
     series: dict[str, list[dict[str, Any]]] = {
         "pe": [], "pb": [], "ps": [],
-        "ev_to_revenue": [], "ev_to_ebit": [],
+        "ev_to_revenue": [], "ev_to_ebit": [], "p_ffo": [],
     }
 
     common_years = sorted(
@@ -123,6 +151,7 @@ def compute_historical_multiples(
         ni = ni_by_year.get(year)
         oi = op_income_by_year.get(year)
         eq = equity_by_year.get(year)
+        da = da_by_year.get(year)
 
         if ni and ni > 0:
             series["pe"].append({"year": year, "value": round(price / (ni / shares), 2)})
@@ -133,6 +162,9 @@ def compute_historical_multiples(
             series["ev_to_revenue"].append({"year": year, "value": round(ev / rev, 2)})
         if oi and oi > 0:
             series["ev_to_ebit"].append({"year": year, "value": round(ev / oi, 2)})
+        ffo = compute_ffo(ni, da)
+        if ffo and ffo > 0:
+            series["p_ffo"].append({"year": year, "value": round(mkt_cap / ffo, 2)})
 
     stats: dict[str, Any] = {}
     for name, entries in series.items():
