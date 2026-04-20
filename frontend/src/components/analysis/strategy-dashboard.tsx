@@ -1,8 +1,8 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
+import { Target, TrendingUp, TrendingDown } from "lucide-react";
 
 interface HistoricalPE {
   year: number;
@@ -23,39 +23,48 @@ interface StrategyDashboardProps {
   historical_pe: HistoricalPE[] | null;
 }
 
-function signalColor(signal: string): string {
+function signalTheme(signal: string) {
   switch (signal) {
     case "Deep Value":
-      return "bg-emerald-600";
+      return {
+        ring: "ring-emerald-500/30",
+        bg: "bg-emerald-500/10",
+        text: "text-emerald-700 dark:text-emerald-400",
+        dot: "bg-emerald-500",
+      };
     case "Undervalued":
-      return "bg-emerald-500";
+      return {
+        ring: "ring-emerald-500/20",
+        bg: "bg-emerald-500/10",
+        text: "text-emerald-600 dark:text-emerald-400",
+        dot: "bg-emerald-500",
+      };
     case "Fair Value":
-      return "bg-amber-500";
+      return {
+        ring: "ring-amber-500/20",
+        bg: "bg-amber-500/10",
+        text: "text-amber-700 dark:text-amber-400",
+        dot: "bg-amber-500",
+      };
     case "Overvalued":
-      return "bg-red-500";
+      return {
+        ring: "ring-red-500/20",
+        bg: "bg-red-500/10",
+        text: "text-red-700 dark:text-red-400",
+        dot: "bg-red-500",
+      };
     default:
-      return "bg-gray-500";
+      return {
+        ring: "ring-gray-500/20",
+        bg: "bg-gray-500/10",
+        text: "text-gray-700 dark:text-gray-400",
+        dot: "bg-gray-500",
+      };
   }
 }
 
-function signalTextColor(signal: string): string {
-  switch (signal) {
-    case "Deep Value":
-    case "Undervalued":
-      return "text-emerald-600";
-    case "Fair Value":
-      return "text-amber-600";
-    case "Overvalued":
-      return "text-red-600";
-    default:
-      return "text-gray-600";
-  }
-}
-
-/** Map margin-of-safety % to a 0–100 position on the thermometer (0 = overvalued, 100 = deep value). */
 function thermometerPosition(mosPct: number): number {
-  // -50% MoS → 0 (far left / overvalued), +50% MoS → 100 (far right / deep value)
-  return Math.min(100, Math.max(0, (mosPct + 50) / 100 * 100));
+  return Math.min(100, Math.max(0, ((mosPct + 50) / 100) * 100));
 }
 
 function entryRecommendation(
@@ -63,25 +72,50 @@ function entryRecommendation(
   currentPrice: number,
   intrinsicValue: number,
   suggestedEntry: number,
-  mosPct: number,
+  mosPct: number
 ): string {
   switch (signal) {
     case "Overvalued":
-      return `The stock appears overvalued relative to DCF intrinsic value. Consider waiting for a pullback to $${suggestedEntry.toFixed(2)} or below for a 15% margin of safety.`;
+      return `Stock appears overvalued relative to DCF intrinsic value. Consider waiting for a pullback to $${suggestedEntry.toFixed(2)} or below for a 15% margin of safety.`;
     case "Fair Value":
-      return `The stock is trading near fair value. A position at $${suggestedEntry.toFixed(2)} would provide a 15% margin of safety.`;
+      return `Stock is trading near fair value. A position at $${suggestedEntry.toFixed(2)} would provide a 15% margin of safety.`;
     case "Undervalued":
-      return `The stock appears undervalued with ${mosPct.toFixed(1)}% margin of safety. Current price already offers a discount to intrinsic value.`;
+      return `Stock appears undervalued with ${mosPct.toFixed(1)}% margin of safety. Current price already offers a discount to intrinsic value.`;
     case "Deep Value":
-      return `The stock is in deep value territory with ${mosPct.toFixed(1)}% margin of safety. Current price of $${currentPrice.toFixed(2)} is well below the intrinsic value of $${intrinsicValue.toFixed(2)}.`;
+      return `Stock is in deep value territory with ${mosPct.toFixed(1)}% margin of safety. Current price of $${currentPrice.toFixed(2)} is well below intrinsic value of $${intrinsicValue.toFixed(2)}.`;
     default:
       return "";
   }
 }
 
+function PriceColumn({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[10.5px] text-muted-foreground uppercase tracking-wider">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "font-mono font-semibold tabular-nums leading-none",
+          highlight ? "text-[24px] text-[var(--brand)]" : "text-[22px]"
+        )}
+      >
+        ${value.toFixed(2)}
+      </p>
+    </div>
+  );
+}
+
 export default function StrategyDashboard({
   entity_name,
-  ticker,
   current_price,
   intrinsic_value,
   margin_of_safety_pct,
@@ -93,146 +127,180 @@ export default function StrategyDashboard({
   historical_pe,
 }: StrategyDashboardProps) {
   const pos = thermometerPosition(margin_of_safety_pct);
+  const theme = signalTheme(signal);
+  const positive = margin_of_safety_pct >= 0;
+  const UpDownIcon = upside_pct >= 0 ? TrendingUp : TrendingDown;
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">
-            {entity_name} - Entry Strategy
-          </CardTitle>
-          <Badge className={`${signalColor(signal)} text-white`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+              <Target className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <div>
+              <CardTitle className="text-[14px] font-semibold">
+                Entry strategy
+              </CardTitle>
+              <p className="text-[11px] text-muted-foreground">{entity_name}</p>
+            </div>
+          </div>
+          <div
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2.5 h-6 rounded-full text-[11px] font-medium ring-1",
+              theme.bg,
+              theme.text,
+              theme.ring
+            )}
+          >
+            <span className={cn("h-1.5 w-1.5 rounded-full", theme.dot)} />
             {signal}
-          </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* Price comparison grid */}
-        <div className="grid grid-cols-3 gap-4 text-center">
-          <div>
-            <p className="text-2xl font-bold font-mono">
-              ${current_price.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground">Market Price</p>
-          </div>
-          <div>
-            <p className="text-2xl font-bold font-mono">
-              ${intrinsic_value.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground">Intrinsic Value</p>
-          </div>
-          <div>
-            <p className="text-2xl font-bold font-mono">
-              ${suggested_entry_price.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground">Entry (15% MoS)</p>
-          </div>
+        {/* Price grid */}
+        <div className="grid grid-cols-3 gap-4">
+          <PriceColumn label="Market price" value={current_price} />
+          <PriceColumn
+            label="Intrinsic value"
+            value={intrinsic_value}
+            highlight
+          />
+          <PriceColumn
+            label="Entry (15% MoS)"
+            value={suggested_entry_price}
+          />
         </div>
 
-        <Separator />
-
-        {/* Valuation thermometer */}
-        <div>
-          <p className="text-xs text-muted-foreground mb-3">
-            Valuation Thermometer
-          </p>
-          <div className="relative h-4 rounded-full overflow-hidden"
-            style={{
-              background: "linear-gradient(to right, #ef4444, #f59e0b, #10b981)",
-            }}
-          >
+        {/* Thermometer */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-[10.5px] uppercase tracking-wider text-muted-foreground">
+            <span>Valuation thermometer</span>
+          </div>
+          <div className="relative">
+            <div
+              className="h-2 rounded-full"
+              style={{
+                background:
+                  "linear-gradient(to right, oklch(0.62 0.2 25) 0%, oklch(0.75 0.14 85) 50%, oklch(0.68 0.17 150) 100%)",
+              }}
+            />
             {/* Marker */}
             <div
-              className="absolute top-0 h-full w-1 bg-white shadow-md border border-gray-400"
-              style={{ left: `${pos}%`, transform: "translateX(-50%)" }}
-            />
+              className="absolute top-1/2 -translate-y-1/2 transition-all duration-300"
+              style={{ left: `${pos}%`, transform: "translate(-50%, -50%)" }}
+            >
+              <div className="h-4 w-4 rounded-full bg-background ring-2 ring-foreground shadow-md" />
+            </div>
           </div>
-          <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
+          <div className="flex justify-between text-[10px] text-muted-foreground/70 font-medium">
             <span>Overvalued</span>
-            <span>Fair Value</span>
-            <span>Deep Value</span>
+            <span>Fair</span>
+            <span>Deep value</span>
           </div>
         </div>
 
-        <Separator />
-
-        {/* Key metrics */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="text-center p-3 bg-muted rounded-md">
-            <p className={`text-xl font-mono font-bold ${margin_of_safety_pct >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-              {margin_of_safety_pct > 0 ? "+" : ""}{margin_of_safety_pct.toFixed(1)}%
+        {/* Key metrics tiles */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl border bg-muted/30 p-3.5 space-y-1">
+            <p className="text-[10.5px] text-muted-foreground uppercase tracking-wider">
+              Margin of safety
             </p>
-            <p className="text-xs text-muted-foreground">Margin of Safety</p>
+            <p
+              className={cn(
+                "font-mono font-semibold text-[22px] tabular-nums leading-none",
+                positive
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-red-600 dark:text-red-400"
+              )}
+            >
+              {margin_of_safety_pct > 0 ? "+" : ""}
+              {margin_of_safety_pct.toFixed(1)}%
+            </p>
           </div>
-          <div className="text-center p-3 bg-muted rounded-md">
-            <p className={`text-xl font-mono font-bold ${upside_pct >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-              {upside_pct > 0 ? "+" : ""}{upside_pct.toFixed(1)}%
-            </p>
-            <p className="text-xs text-muted-foreground">
+          <div className="rounded-xl border bg-muted/30 p-3.5 space-y-1">
+            <p className="text-[10.5px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+              <UpDownIcon className="h-2.5 w-2.5" />
               {upside_pct >= 0 ? "Upside" : "Downside"}
             </p>
+            <p
+              className={cn(
+                "font-mono font-semibold text-[22px] tabular-nums leading-none",
+                upside_pct >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-red-600 dark:text-red-400"
+              )}
+            >
+              {upside_pct > 0 ? "+" : ""}
+              {upside_pct.toFixed(1)}%
+            </p>
           </div>
         </div>
 
-        {/* P/E Percentile */}
+        {/* P/E percentile */}
         {current_pe != null && (
-          <>
-            <Separator />
-            <div>
-              <p className="text-xs text-muted-foreground mb-2">
-                P/E Valuation Percentile
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <p className="text-[10.5px] text-muted-foreground uppercase tracking-wider">
+                P/E valuation percentile
               </p>
-              <div className="flex items-center gap-3">
-                <span className="text-lg font-mono font-bold shrink-0">
-                  {current_pe.toFixed(1)}x
-                </span>
-                {pe_percentile != null && (
-                  <div className="flex-1 space-y-1">
-                    <div className="relative h-3 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={`absolute top-0 left-0 h-full rounded-full transition-all ${
-                          pe_percentile > 80
-                            ? "bg-red-500"
-                            : pe_percentile > 50
-                              ? "bg-amber-500"
-                              : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${pe_percentile}%` }}
-                      />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      {pe_percentile.toFixed(0)}th percentile over{" "}
-                      {historical_pe?.length ?? 0} years of data
-                    </p>
-                  </div>
-                )}
-              </div>
-              {pe_percentile != null && pe_percentile > 80 && (
-                <p className="text-xs text-red-600 mt-1">
-                  P/E is in the historically expensive zone.
-                </p>
-              )}
-              {pe_percentile != null && pe_percentile < 20 && (
-                <p className="text-xs text-emerald-600 mt-1">
-                  P/E is in the historically cheap zone.
-                </p>
-              )}
+              <span className="font-mono font-semibold text-[13px] tabular-nums">
+                {current_pe.toFixed(1)}x
+              </span>
             </div>
-          </>
+            {pe_percentile != null && (
+              <>
+                <div className="relative h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={cn(
+                      "absolute inset-y-0 left-0 rounded-full",
+                      pe_percentile > 80
+                        ? "bg-red-500"
+                        : pe_percentile > 50
+                          ? "bg-amber-500"
+                          : "bg-emerald-500"
+                    )}
+                    style={{ width: `${pe_percentile}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {pe_percentile.toFixed(0)}th percentile over{" "}
+                  {historical_pe?.length ?? 0} years
+                  {pe_percentile > 80 && (
+                    <span className="text-red-600 dark:text-red-400 ml-1.5">
+                      · historically expensive
+                    </span>
+                  )}
+                  {pe_percentile < 20 && (
+                    <span className="text-emerald-600 dark:text-emerald-400 ml-1.5">
+                      · historically cheap
+                    </span>
+                  )}
+                </p>
+              </>
+            )}
+          </div>
         )}
 
-        <Separator />
-
-        {/* Entry recommendation */}
-        <p className={`text-sm ${signalTextColor(signal)}`}>
+        {/* Recommendation callout */}
+        <div
+          className={cn(
+            "rounded-xl p-3.5 text-[12.5px] leading-relaxed border",
+            theme.bg,
+            theme.text,
+            theme.ring
+          )}
+        >
           {entryRecommendation(
             signal,
             current_price,
             intrinsic_value,
             suggested_entry_price,
-            margin_of_safety_pct,
+            margin_of_safety_pct
           )}
-        </p>
+        </div>
       </CardContent>
     </Card>
   );
