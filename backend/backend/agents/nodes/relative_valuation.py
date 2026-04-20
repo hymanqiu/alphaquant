@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -14,6 +15,10 @@ from backend.models.events import (
     StepCompleteEvent,
 )
 from backend.services.market_data import market_data_client
+from backend.agents.nodes.industry_mapping import (
+    recommended_multiples,
+    static_explainer,
+)
 from backend.agents.nodes.relative_valuation_math import (
     compute_current_multiples,
     compute_historical_multiples,
@@ -108,13 +113,25 @@ async def _run_relative_valuation(
     ticker = financials.ticker
     reasoning: list[str] = []
 
+    # --- Fetch price and company profile in parallel ---
+    # /stable/quote is premium-gated for some tickers on the FMP free tier,
+    # while /stable/profile returns a price field that works for all symbols.
+    # Use quote first and fall back to profile.price.
+    current_price, profile = await asyncio.gather(
+        market_data_client.get_current_price(ticker),
+        market_data_client.get_company_profile(ticker),
+    )
+    if current_price is None or current_price <= 0:
+        current_price = profile.get("price")
+    sector = profile.get("sector")
+    industry = profile.get("industry")
+    last_dividend = profile.get("last_dividend")
+
+    sector_label = f" ({sector}{' / ' + industry if industry else ''})" if sector else ""
     writer(AgentThinkingEvent(
         node="relative_valuation",
-        content=f"Computing relative valuation for {financials.entity_name}...",
+        content=f"Computing relative valuation for {financials.entity_name}{sector_label}...",
     ).model_dump())
-
-    # --- Get current price ---
-    current_price = await market_data_client.get_current_price(ticker)
 
     if current_price is None or current_price <= 0:
         writer(AgentThinkingEvent(
@@ -124,6 +141,8 @@ async def _run_relative_valuation(
         result: dict[str, Any] = {
             "price_available": False,
             "peer_data_available": False,
+            "sector": sector,
+            "industry": industry,
             "current_multiples": {},
             "historical_stats": {},
             "percentiles": {},
@@ -134,8 +153,18 @@ async def _run_relative_valuation(
             "reasoning_steps": ["Relative valuation: market price unavailable"],
         }
 
+    # --- Industry-based recommendation ---
+    recommendation = recommended_multiples(sector, industry)
+    industry_explanation = static_explainer(sector, industry, {})
+    if sector:
+        reasoning.append(
+            f"Industry: {sector}"
+            + (f" / {industry}" if industry else "")
+            + f" — recommended multiples: {', '.join(recommendation['recommended'])}"
+        )
+
     # --- Current multiples ---
-    current = compute_current_multiples(financials, current_price)
+    current = compute_current_multiples(financials, current_price, last_dividend=last_dividend)
     current_multiples = current.get("multiples", {})
     reasoning.append(f"Market cap: ${current.get('market_cap', 0):,.0f}")
     reasoning.append(f"Enterprise value: ${current.get('enterprise_value', 0):,.0f}")
@@ -162,6 +191,7 @@ async def _run_relative_valuation(
         multiple_key_map = {
             "pe": "pe", "pb": "pb", "ps": "ps",
             "ev_to_revenue": "ev_to_revenue", "ev_to_ebit": "ev_to_ebit",
+            "p_ffo": "p_ffo",
         }
         for hist_key, current_key in multiple_key_map.items():
             hist_stat = historical_stats.get(hist_key, {})
@@ -228,6 +258,11 @@ async def _run_relative_valuation(
         "historical_stats": historical_stats,
         "percentiles": percentiles,
         "peer_comparison": peer_comparison,
+        "sector": sector,
+        "industry": industry,
+        "recommended_multiples": recommendation["recommended"],
+        "industry_explanation": industry_explanation,
+        "dividend_yield": current_multiples.get("dividend_yield"),
     }
 
     writer(ComponentEvent(

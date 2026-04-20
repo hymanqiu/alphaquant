@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Monitor, CheckCircle2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getComponent } from "@/components/component-registry";
 import type { ComponentInstruction, SSEStatus } from "@/lib/types";
@@ -17,8 +17,10 @@ function EmptyCanvas() {
   return (
     <div className="flex-1 flex items-center justify-center text-center p-8">
       <div className="space-y-3 text-muted-foreground">
-        <BarChart3 className="h-12 w-12 mx-auto opacity-30" />
-        <p className="text-sm">Analysis results will appear here</p>
+        <div className="mx-auto h-12 w-12 rounded-2xl bg-muted/50 flex items-center justify-center">
+          <BarChart3 className="h-5 w-5 opacity-40" />
+        </div>
+        <p className="text-[13px]">Analysis results will appear here</p>
       </div>
     </div>
   );
@@ -34,69 +36,96 @@ export function AnalysisCanvas({
 
   if (!ticker) {
     return (
-      <div className="flex-1 bg-muted/20 flex flex-col">
+      <div className="flex-1 bg-surface flex flex-col">
         <EmptyCanvas />
       </div>
     );
   }
 
   return (
-    <div className="flex-1 bg-muted/20 flex flex-col overflow-hidden">
+    <div className="flex-1 bg-surface flex flex-col overflow-hidden">
       {/* Canvas header */}
-      <div className="px-6 py-3 border-b bg-background/80 flex items-center gap-3">
-        <span className="font-mono font-bold text-lg">{ticker}</span>
-        <span className="text-sm text-muted-foreground">Analysis</span>
-        {isActive && (
-          <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
-            Streaming...
-          </span>
-        )}
-        {status === "complete" && (
-          <span className="ml-auto text-xs text-emerald-600">Complete</span>
-        )}
+      <div className="h-14 px-6 border-b bg-background/60 backdrop-blur-sm flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-lg bg-foreground/5 ring-1 ring-border flex items-center justify-center">
+            <Monitor className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono font-bold text-[15px] tracking-tight">
+              {ticker}
+            </span>
+            <span className="text-[12px] text-muted-foreground">
+              analysis canvas
+            </span>
+          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          {isActive && (
+            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[var(--brand)] opacity-60 animate-ping" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+              </span>
+              Streaming
+            </span>
+          )}
+          {status === "complete" && (
+            <span className="flex items-center gap-1.5 text-[11px] text-emerald-600">
+              <CheckCircle2 className="h-3 w-3" />
+              Complete
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Components */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {components.length === 0 && isActive && (
-          <div className="text-center text-muted-foreground py-12">
-            <p className="text-sm">Waiting for analysis results...</p>
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <div className="max-w-5xl mx-auto p-6 space-y-4">
+          {components.length === 0 && isActive && (
+            <div className="text-center text-muted-foreground py-16">
+              <div className="inline-flex items-center gap-2 text-[13px]">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-[var(--brand)] opacity-60 animate-ping" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+                </span>
+                Waiting for analysis results…
+              </div>
+            </div>
+          )}
 
-        {components.length === 0 && !isActive && status !== "complete" && (
-          <EmptyCanvas />
-        )}
+          {components.length === 0 && !isActive && status !== "complete" && (
+            <EmptyCanvas />
+          )}
 
-        {components.map((instruction) => {
-          const Component = getComponent(instruction.component_type);
-          if (!Component) {
+          {components.map((instruction) => {
+            const Component = getComponent(instruction.component_type);
+            if (!Component) {
+              return (
+                <div
+                  key={instruction.id}
+                  className="p-4 border border-dashed rounded-xl text-muted-foreground text-sm"
+                >
+                  Unknown component: {instruction.component_type}
+                </div>
+              );
+            }
             return (
               <div
                 key={instruction.id}
-                className="p-4 border border-dashed rounded-lg text-muted-foreground text-sm"
+                className="animate-in fade-in slide-in-from-bottom-2 duration-300"
               >
-                Unknown component: {instruction.component_type}
+                <Suspense
+                  fallback={<Skeleton className="h-48 w-full rounded-xl" />}
+                >
+                  <Component
+                    {...instruction.props}
+                    onRecalculate={onRecalculate}
+                  />
+                </Suspense>
               </div>
             );
-          }
-          return (
-            <div
-              key={instruction.id}
-              className="animate-in fade-in slide-in-from-bottom-2 duration-300"
-            >
-              <Suspense
-                fallback={<Skeleton className="h-48 w-full rounded-lg" />}
-              >
-                <Component
-                  {...instruction.props}
-                  onRecalculate={onRecalculate}
-                />
-              </Suspense>
-            </div>
-          );
-        })}
+          })}
+        </div>
       </div>
     </div>
   );

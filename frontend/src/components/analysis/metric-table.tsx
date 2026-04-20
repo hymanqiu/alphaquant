@@ -1,14 +1,6 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 interface Metric {
   label: string;
@@ -25,32 +17,30 @@ interface MetricTableProps {
 export default function MetricTable({ title, metrics }: MetricTableProps) {
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">{title}</CardTitle>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-[13px] font-medium text-muted-foreground">
+          {title}
+        </CardTitle>
       </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Metric</TableHead>
-              <TableHead className="text-right">Value</TableHead>
-              <TableHead className="text-right">Year</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {metrics.map((m, i) => (
-              <TableRow key={i}>
-                <TableCell className="font-medium">{m.label}</TableCell>
-                <TableCell className="text-right font-mono">
+      <CardContent className="pb-2">
+        <div className="divide-y divide-border/60">
+          {metrics.map((m, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0 group hover:bg-muted/30 -mx-2 px-2 rounded-lg transition-colors"
+            >
+              <span className="text-[13px] text-foreground/90">{m.label}</span>
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono font-semibold text-[13px] tabular-nums">
                   {m.value}
-                </TableCell>
-                <TableCell className="text-right text-muted-foreground">
+                </span>
+                <span className="text-[10px] text-muted-foreground/70 font-mono tabular-nums">
                   {m.year}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );

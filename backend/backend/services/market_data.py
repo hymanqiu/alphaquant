@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, timedelta
+from typing import Any
 
 import httpx
 
@@ -50,6 +51,39 @@ class MarketDataClient:
         except (KeyError, ValueError, TypeError) as e:
             logger.warning("FMP get_current_price(%s) parse error: %s", ticker, e)
         return None
+
+    async def get_company_profile(self, ticker: str) -> dict[str, Any]:
+        """Fetch GICS sector/industry, TTM dividend, and price. Returns {} on failure.
+
+        Also returns ``price`` — the profile endpoint includes it and works on
+        FMP free-tier symbols that ``/stable/quote`` rejects as premium-only.
+        """
+        if not settings.fmp_api_key:
+            return {}
+        try:
+            resp = await self._ensure_client().get(
+                "/stable/profile",
+                params={"symbol": ticker, "apikey": settings.fmp_api_key},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data and isinstance(data, list) and len(data) > 0:
+                item = data[0]
+                last_div = item.get("lastDividend")
+                price = item.get("price")
+                return {
+                    "sector": item.get("sector") or None,
+                    "industry": item.get("industry") or None,
+                    "last_dividend": float(last_div) if last_div else None,
+                    "price": float(price) if price else None,
+                }
+        except httpx.HTTPStatusError as e:
+            logger.warning("FMP get_company_profile(%s) HTTP %s", ticker, e.response.status_code)
+        except httpx.RequestError as e:
+            logger.warning("FMP get_company_profile(%s) request error: %s", ticker, e)
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning("FMP get_company_profile(%s) parse error: %s", ticker, e)
+        return {}
 
     async def get_annual_closing_prices(
         self, ticker: str, years: int = 10
