@@ -124,18 +124,42 @@ def _run_logic_trace(state: AnalysisState, financials: Any, writer: StreamWriter
     health = state.get("health_assessment", "Unknown")
     intrinsic = dcf.get("intrinsic_value_per_share") if dcf else None
 
+    # Sentiment summary
+    sentiment = state.get("event_sentiment_result")
+    sentiment_summary = ""
+    if sentiment and sentiment.get("sentiment_label"):
+        sentiment_summary = (
+            f" Event sentiment: {sentiment['sentiment_label']} "
+            f"(score: {sentiment['overall_sentiment']:.2f})."
+        )
+
+    # Event impact summary
+    impact = state.get("event_impact_result")
+    impact_summary = ""
+    if impact and impact.get("summary"):
+        impact_summary = f" Event impact: {impact['summary']}."
+
+    # Use recalculated intrinsic value if available
+    if (
+        impact
+        and impact.get("recalculated_dcf", {}).get("intrinsic_value_per_share")
+    ):
+        intrinsic = impact["recalculated_dcf"]["intrinsic_value_per_share"]
+
     if intrinsic:
         verdict = (
             f"{financials.entity_name} ({financials.ticker}): "
             f"Financial health is {health}. "
-            f"DCF intrinsic value: ${intrinsic:,.2f}/share. "
+            f"DCF intrinsic value: ${intrinsic:,.2f}/share."
+            f"{sentiment_summary}{impact_summary} "
             f"All {len(sources)} data points traced to SEC EDGAR filings."
         )
     else:
         verdict = (
             f"{financials.entity_name} ({financials.ticker}): "
             f"Financial health is {health}. "
-            f"DCF model could not determine intrinsic value (insufficient data). "
+            f"DCF model could not determine intrinsic value (insufficient data)."
+            f"{sentiment_summary}{impact_summary} "
             f"All {len(sources)} data points traced to SEC EDGAR filings."
         )
 

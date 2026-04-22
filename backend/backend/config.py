@@ -22,10 +22,16 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
     fmp_api_key: str = ""
     fmp_base_url: str = "https://financialmodelingprep.com"
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_model: str = ""
+    finnhub_api_key: str = ""
+    finnhub_base_url: str = "https://finnhub.io/api/v1"
 
     model_config = {
         "env_prefix": "AQ_",
         "env_file": str(_find_env_file()),
+        "extra": "ignore",
     }
 
 

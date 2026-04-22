@@ -6,8 +6,12 @@ import json
 import logging
 from typing import Any, AsyncIterator
 
+import re
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+_TICKER_RE = re.compile(r"^[A-Za-z]{1,5}$")
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from backend.agents.nodes.dcf_model import compute_dcf
@@ -22,6 +26,11 @@ router = APIRouter()
 @router.get("/api/analyze/{ticker}")
 async def analyze_ticker(ticker: str) -> EventSourceResponse:
     """Stream analysis events via SSE as the LangGraph workflow executes."""
+    if not _TICKER_RE.match(ticker):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid ticker. Must be 1-5 alphabetic characters.",
+        )
     graph = build_value_analyst_graph().compile()
 
     async def event_generator() -> AsyncIterator[ServerSentEvent]:
@@ -33,6 +42,8 @@ async def analyze_ticker(ticker: str) -> EventSourceResponse:
             "health_assessment": None,
             "dcf_result": None,
             "relative_valuation_result": None,
+            "event_sentiment_result": None,
+            "event_impact_result": None,
             "strategy_result": None,
             "source_map": None,
             "reasoning_steps": [],
