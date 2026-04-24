@@ -21,6 +21,10 @@ class AnalysisState(TypedDict):
     dcf_result: dict[str, Any] | None
     # Relative valuation
     relative_valuation_result: dict[str, Any] | None
+    # Event & sentiment
+    event_sentiment_result: dict[str, Any] | None
+    # Event impact
+    event_impact_result: dict[str, Any] | None
     # Strategy
     strategy_result: dict[str, Any] | None
     # Source tracing

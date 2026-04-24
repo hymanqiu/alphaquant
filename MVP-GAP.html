@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlphaQuant — MVP 差距分析</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface-2: #222631;
+    --border: #2d3141;
+    --text: #e4e5e9;
+    --text-muted: #8b8fa3;
+    --accent: #6c8cff;
+    --green: #34d399;
+    --green-dim: rgba(52,211,153,.12);
+    --red: #f87171;
+    --red-dim: rgba(248,113,113,.12);
+    --amber: #fbbf24;
+    --amber-dim: rgba(251,191,36,.12);
+    --blue: #60a5fa;
+    --blue-dim: rgba(96,165,250,.12);
+    --purple: #a78bfa;
+    --purple-dim: rgba(167,139,250,.12);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size:1.75rem; font-weight:700; margin-bottom:.25rem; }
+  .subtitle { color:var(--text-muted); font-size:.875rem; margin-bottom:2rem; }
+
+  /* ── Badges ── */
+  .badge {
+    display:inline-block; padding:2px 10px; border-radius:999px;
+    font-size:.7rem; font-weight:600; letter-spacing:.03em; white-space:nowrap;
+  }
+  .badge-ok     { background:var(--green-dim);  color:var(--green); }
+  .badge-warn   { background:var(--amber-dim);  color:var(--amber); }
+  .badge-crit   { background:var(--red-dim);    color:var(--red); }
+  .badge-info   { background:var(--blue-dim);   color:var(--blue); }
+  .badge-purple { background:var(--purple-dim); color:var(--purple); }
+
+  /* ── Progress bar ── */
+  .progress { background:var(--surface-2); border-radius:4px; height:8px; overflow:hidden; }
+  .progress-bar { height:100%; border-radius:4px; transition:width .3s; }
+
+  /* ── Section ── */
+  .section { margin-bottom:2.5rem; }
+  .section-title {
+    font-size:1.15rem; font-weight:700; margin-bottom:1rem;
+    padding-bottom:.5rem; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:.5rem;
+  }
+  .section-icon {
+    width:28px; height:28px; border-radius:6px; display:flex;
+    align-items:center; justify-content:center; font-size:.85rem; flex-shrink:0;
+  }
+
+  /* ── Cards grid ── */
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:1rem; }
+  .card {
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:1.1rem 1.25rem; transition:border-color .15s;
+  }
+  .card:hover { border-color:var(--accent); }
+  .card h3 { font-size:.9rem; font-weight:600; margin-bottom:.4rem; display:flex; align-items:center; gap:.4rem; }
+  .card p  { font-size:.8rem; color:var(--text-muted); margin-bottom:.6rem; }
+  .card ul { list-style:none; font-size:.78rem; color:var(--text-muted); }
+  .card li { padding:2px 0; }
+  .card li::before { content:"›"; margin-right:6px; color:var(--accent); }
+
+  /* ── Tables ── */
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  th {
+    text-align:left; padding:8px 10px; font-weight:600; color:var(--text-muted);
+    border-bottom:1px solid var(--border); font-size:.72rem; text-transform:uppercase;
+    letter-spacing:.05em;
+  }
+  td { padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  table.striped tr:nth-child(even) { background:var(--surface); border-radius:6px; }
+  code {
+    font-family:'SF Mono',Consolas,monospace; font-size:.75rem;
+    background:var(--surface-2); padding:1px 6px; border-radius:4px;
+  }
+
+  /* ── Stat boxes ── */
+  .stat-row { display:flex; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+  .stat-box {
+    flex:1; min-width:120px; background:var(--surface); border:1px solid var(--border);
+    border-radius:10px; padding:1rem 1.1rem; text-align:center;
+  }
+  .stat-num { font-size:1.6rem; font-weight:700; line-height:1; margin-bottom:.25rem; }
+  .stat-label { font-size:.7rem; color:var(--text-muted); }
+
+  /* ── Dimension overview table ── */
+  .dim-table { width:100%; font-size:.78rem; }
+  .dim-table td:nth-child(1) { font-weight:600; white-space:nowrap; }
+  .dim-table td:nth-child(2),
+  .dim-table td:nth-child(3),
+  .dim-table td:nth-child(4),
+  .dim-table td:nth-child(5) { font-size:.72rem; color:var(--text-muted); text-align:center; }
+  .dim-table td:nth-child(7) { font-size:.72rem; }
+
+  /* ── Phase timeline ── */
+  .phase { display:flex; gap:1rem; margin-bottom:1.5rem; }
+  .phase-marker {
+    width:6px; border-radius:3px; flex-shrink:0;
+  }
+  .phase-body { flex:1; }
+  .phase-title { font-weight:700; font-size:.9rem; margin-bottom:.5rem; }
+  .phase-items { font-size:.78rem; color:var(--text-muted); }
+  .phase-items span { display:inline-block; background:var(--surface-2); padding:2px 10px; border-radius:4px; margin:2px 4px 2px 0; }
+</style>
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<h1>AlphaQuant — 最小可上线版本差距分析</h1>
+<p class="subtitle">最后更新：2026-04-23 &nbsp;|&nbsp; 当前版本：v0.4.0 &nbsp;|&nbsp; 文档版本：1.0</p>
+
+<!-- ════════════ STAT SUMMARY ════════════ -->
+<div class="stat-row">
+  <div class="stat-box">
+    <div class="stat-num" style="color:var(--red)">4</div>
+    <div class="stat-label">硬性阻碍</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-num" style="color:var(--amber)">5</div>
+    <div class="stat-label">商业功能</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-num" style="color:var(--purple)">4</div>
+    <div class="stat-label">安全加固</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-num" style="color:var(--blue)">5</div>
+    <div class="stat-label">运维就绪</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-num" style="color:var(--text)">18</div>
+    <div class="stat-label">总计待完成</div>
+  </div>
+</div>
+
+<!-- ════════════ DIMENSION OVERVIEW ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--blue-dim);color:var(--blue)">📊</div>
+    版本总览与差距摘要
+  </div>
+  <div style="overflow-x:auto">
+  <table class="dim-table">
+    <thead>
+      <tr>
+        <th>维度</th>
+        <th>v0.1</th><th>v0.2</th><th>v0.3</th><th style="color:var(--accent)">v0.4</th>
+        <th>MVP 目标</th>
+        <th>差距</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>分析引擎</td>
+        <td>5节点</td><td>6节点</td><td>7节点</td><td style="color:var(--accent)">8节点</td>
+        <td>当前已满足</td>
+        <td><span class="badge badge-ok">无差距</span></td>
+      </tr>
+      <tr>
+        <td>用户系统</td>
+        <td>—</td><td>—</td><td>—</td><td>—</td>
+        <td>JWT / 注册登录 / 用户资料</td>
+        <td><span class="badge badge-crit">完全缺失</span></td>
+      </tr>
+      <tr>
+        <td>数据持久化</td>
+        <td>—</td><td>—</td><td>—</td><td>内存缓存</td>
+        <td>PostgreSQL + 分析历史</td>
+        <td><span class="badge badge-crit">完全缺失</span></td>
+      </tr>
+      <tr>
+        <td>安全防护</td>
+        <td>—</td><td>—</td><td>—</td><td>ticker正则 / .env</td>
+        <td>限流 / 限连 / Prompt防护</td>
+        <td><span class="badge badge-crit">关键缺失</span></td>
+      </tr>
+      <tr>
+        <td>部署运维</td>
+        <td>—</td><td>—</td><td>—</td><td>手动启动</td>
+        <td>Docker + CI/CD + /health</td>
+        <td><span class="badge badge-crit">完全缺失</span></td>
+      </tr>
+      <tr>
+        <td>导出 / 分享</td>
+        <td>—</td><td>—</td><td>—</td><td>—</td>
+        <td>PDF 导出 / 分享链接</td>
+        <td><span class="badge badge-crit">完全缺失</span></td>
+      </tr>
+      <tr>
+        <td>移动端</td>
+        <td>—</td><td>—</td><td>—</td><td>—</td>
+        <td>响应式适配</td>
+        <td><span class="badge badge-crit">完全缺失</span></td>
+      </tr>
+      <tr>
+        <td>合规页面</td>
+        <td>—</td><td>—</td><td>—</td><td>—</td>
+        <td>免责声明 / 隐私 / 条款</td>
+        <td><span class="badge badge-crit">完全缺失</span></td>
+      </tr>
+      <tr>
+        <td>监控</td>
+        <td>—</td><td>—</td><td>—</td><td>logging.warning</td>
+        <td>/health / Prometheus / JSON日志</td>
+        <td><span class="badge badge-warn">关键缺失</span></td>
+      </tr>
+      <tr>
+        <td>测试覆盖</td>
+        <td>0%</td><td>~15%</td><td>~18%</td><td>~20%</td>
+        <td>&gt;60%（含节点/API/前端）</td>
+        <td><span class="badge badge-warn">严重不足</span></td>
+      </tr>
+      <tr>
+        <td>前端 UX</td>
+        <td>9组件</td><td>10</td><td>11</td><td>12</td>
+        <td>15+组件 / Landing / 响应式</td>
+        <td><span class="badge badge-warn">功能缺口</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- ════════════ 1. BLOCKERS ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--red-dim);color:var(--red)">🚫</div>
+    一、硬性阻碍 <span class="badge badge-crit">必须解决才能上线</span>
+  </div>
+  <div class="cards">
+
+    <div class="card">
+      <h3><span class="badge badge-crit">P0</span> 没有用户认证系统</h3>
+      <p>两个 API 端点完全公开，零认证。无法区分用户、无法计费、无法限流。</p>
+      <div style="margin-bottom:.4rem">
+        <strong style="font-size:.75rem">每次分析 API 成本：</strong>
+      </div>
+      <table style="font-size:.72rem">
+        <tr><td>SEC EDGAR</td><td>2-3 次</td><td>免费</td></tr>
+        <tr><td>FMP</td><td>4-5 次</td><td>Free 250次/天</td></tr>
+        <tr><td>Finnhub</td><td>3-4 次</td><td>Free 60次/分</td></tr>
+        <tr><td>DeepSeek LLM</td><td>2 次</td><td>~$0.01-0.03/次</td></tr>
+      </table>
+      <div style="margin-top:.6rem">
+        <strong style="font-size:.75rem">MVP 需要：</strong>
+      </div>
+      <ul>
+        <li>用户注册/登录（邮箱 + 密码）</li>
+        <li>JWT 鉴权（access + refresh token）</li>
+        <li>用户模型 + PostgreSQL</li>
+        <li>API Key 管理（程序化访问）</li>
+      </ul>
+      <div style="margin-top:.4rem;font-size:.7rem;color:var(--text-muted)">
+        新增：<code>services/auth.py</code> <code>api/auth_routes.py</code> <code>models/user.py</code>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="badge badge-crit">P0</span> 没有速率限制</h3>
+      <p>入端完全无限制。每个分析触发 8-12 次外部调用，天然的放大攻击向量。</p>
+      <div style="margin-top:.4rem">
+        <strong style="font-size:.75rem">MVP 限制：</strong>
+      </div>
+      <table style="font-size:.72rem">
+        <tr><th>端点</th><th>限制</th></tr>
+        <tr><td><code>/api/analyze/</code></td><td>10次/min/user, 5次/min/IP</td></tr>
+        <tr><td><code>/api/recalculate-dcf</code></td><td>30次/min/user</td></tr>
+        <tr><td>全局</td><td>100 req/min/IP</td></tr>
+      </table>
+      <div style="margin-top:.6rem">
+        <strong style="font-size:.75rem">方案：</strong><code>slowapi</code> + Redis backend
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="badge badge-crit">P0</span> 内存缓存无上限</h3>
+      <p><code>dependencies.py:11</code> — 裸 dict，无 max_size、无后台清理。遍历 10,000 ticker 即可 OOM。</p>
+      <div style="margin-top:.4rem">
+        <strong style="font-size:.75rem">MVP 需要：</strong>
+      </div>
+      <ul>
+        <li>LRU 驱逐：<code>cachetools.TTLCache(maxsize=100, ttl=1800)</code></li>
+        <li>后台清理：<code>asyncio.create_task</code> 定期扫描</li>
+        <li>多实例部署时需要 Redis</li>
+        <li>单条目 &lt; 5MB</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3><span class="badge badge-crit">P0</span> SSE 连接无上限</h3>
+      <p>每个分析持有长连接 30-60 秒，无并发限制。1000 连接 = 1000 个 LangGraph 执行上下文。</p>
+      <div style="margin-top:.4rem">
+        <strong style="font-size:.75rem">MVP 限制：</strong>
+      </div>
+      <table style="font-size:.72rem">
+        <tr><th>限制</th><th>值</th></tr>
+        <tr><td>每 IP 并发</td><td>5</td></tr>
+        <tr><td>SSE 空闲超时</td><td>120 秒</td></tr>
+        <tr><td>全局最大</td><td>100</td></tr>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════ 2. COMMERCIAL ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--amber-dim);color:var(--amber)">💰</div>
+    二、商业功能缺失 <span class="badge badge-warn">决定产品能否卖钱</span>
+  </div>
+  <div class="cards">
+
+    <div class="card">
+      <h3>2.1 数据持久化</h3>
+      <p>一切在内存中，重启即失忆。每次分析重跑全管线（8-12 次外部调用）。</p>
+      <table style="font-size:.72rem">
+        <tr><th>数据</th><th>当前</th><th>MVP</th></tr>
+        <tr><td>分析结果</td><td>无</td><td>PostgreSQL</td></tr>
+        <tr><td>用户信息</td><td>不存在</td><td>PostgreSQL</td></tr>
+        <tr><td>财务缓存</td><td>内存 dict</td><td>Redis</td></tr>
+        <tr><td>关注列表</td><td>不存在</td><td>PostgreSQL</td></tr>
+      </table>
+      <div style="margin-top:.4rem;font-size:.7rem;color:var(--text-muted)">
+        新增：<code>db.py</code> <code>models/user.py</code> <code>models/analysis.py</code> <code>alembic/</code>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>2.2 分析历史与关注列表</h3>
+      <p>前端 localStorage 存 50 条 ticker 列表，无详情。</p>
+      <ul>
+        <li>历史列表页 <code>/history</code></li>
+        <li>历史详情查看（重载组件）</li>
+        <li>关注按钮 + 概览页 <code>/watchlist</code></li>
+        <li>关注列表定期检查更新</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>2.3 导出与分享</h3>
+      <p>分析结果无法保存、导出或分享。金融工具核心价值之一是可留存的研究报告。</p>
+      <table style="font-size:.72rem">
+        <tr><th>功能</th><th>方式</th><th>优先级</th></tr>
+        <tr><td>PDF 报告导出</td><td>weasyprint / @react-pdf</td><td><span class="badge badge-warn">P1</span></td></tr>
+        <tr><td>分享链接</td><td>后端短链 + 过期策略</td><td>P2</td></tr>
+        <tr><td>复制估值摘要</td><td>前端 Clipboard API</td><td><span class="badge badge-ok">P1 简单</span></td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>2.4 价格/事件预警</h3>
+      <p>无通知机制。估值偏离通知和重大事件提醒是自然的付费点。</p>
+      <ul>
+        <li>估值偏离预警：价格 &lt; 内在价值 × (1-MoS)</li>
+        <li>重大事件预警：event_impact 参数调整 &gt; 5%</li>
+        <li>技术：APScheduler + 邮件 (Resend/SendGrid)</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>2.5 多股票对比</h3>
+      <p>一次只能分析一只股票。投资决策需要横向对比。</p>
+      <ul>
+        <li>并排对比：DCF / 健康 / 估值指标</li>
+        <li>关注列表概览仪表盘</li>
+        <li>同行业股票横向比较</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════ 3. SECURITY ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--purple-dim);color:var(--purple)">🔒</div>
+    三、安全加固 <span class="badge badge-purple">防攻击 / 防法律风险</span>
+  </div>
+  <div class="cards">
+
+    <div class="card">
+      <h3><span class="badge badge-purple">HIGH</span> LLM Prompt 注入</h3>
+      <p>新闻标题直接注入 prompt，可操纵情绪评分和 DCF 参数。在金融产品中 = 法律责任。</p>
+      <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:.4rem">
+        <code>llm_sentiment.py:141-149</code> <code>event_impact.py:330-345</code>
+      </div>
+      <ul>
+        <li>输入清洗：剥离 <code>&lt; &gt; &amp;</code></li>
+        <li>系统提示加固：明确反注入指令</li>
+        <li>已有输出校验 <code>_validate_llm_response()</code>，保持</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3><span class="badge badge-purple">HIGH</span> CORS 过于宽松</h3>
+      <p><code>main.py:41-43</code> — 通配符 methods + credentials 有风险。</p>
+      <div style="margin-top:.3rem;font-size:.72rem">
+        <strong>修复：</strong>
+        <code>allow_methods=["GET","POST","OPTIONS"]</code><br>
+        <code>allow_headers=["Authorization","Content-Type"]</code>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="badge badge-purple">HIGH</span> DCF 参数无边界</h3>
+      <p><code>routes.py:82-87</code> — <code>growth_rate</code> 可传 <code>999999.0</code>，产生误导性金融数据。</p>
+      <div style="margin-top:.3rem;font-size:.72rem">
+        <strong>修复：</strong>Pydantic Field validators<br>
+        <code>growth_rate: 0-30%</code> &nbsp;
+        <code>terminal: 0-5%</code> &nbsp;
+        <code>discount: 5-20%</code>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="badge badge-purple">MEDIUM</span> 错误信息脱敏</h3>
+      <p><code>value_analyst.py:60-63</code> — SSE 错误事件直接暴露异常详情。</p>
+      <div style="margin-top:.3rem;font-size:.72rem">
+        <strong>修复：</strong>所有 SSE 错误用通用消息，详情仅 server log。
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════ 4. OPS ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--blue-dim);color:var(--blue)">⚙️</div>
+    四、运维就绪度 <span class="badge badge-info">决定能否稳定运行</span>
+  </div>
+  <div class="cards">
+
+    <div class="card">
+      <h3>4.1 容器化与部署</h3>
+      <p>手动 uvicorn 启动，无容器化。</p>
+      <ul>
+        <li><code>Dockerfile</code> (backend) — Python 3.10 + uvicorn</li>
+        <li><code>Dockerfile</code> (frontend) — Node 20 + nginx</li>
+        <li><code>docker-compose.yml</code> — 全栈 + PostgreSQL + Redis</li>
+        <li><code>nginx.conf</code> — HTTPS 终止 + 反向代理</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>4.2 CI/CD</h3>
+      <p>无自动化。零测试/构建/部署流程。</p>
+      <ul>
+        <li>PR Check: lint + type check + pytest + npm build</li>
+        <li>Deploy: docker build → push → deploy</li>
+        <li>新增：<code>.github/workflows/ci.yml</code></li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>4.3 健康检查与监控</h3>
+      <p>无 /health、无 metrics、无 tracing。</p>
+      <ul>
+        <li><code>GET /health</code> → <code>{"status":"ok","version":"0.4.0"}</code></li>
+        <li><code>GET /ready</code> → 检查 PG + Redis</li>
+        <li>Prometheus: 延迟、错误率、缓存命中率</li>
+        <li>结构化 JSON 日志 + request_id</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>4.4 重试与熔断</h3>
+      <p>外部 API 失败即永久丢失，无重试。</p>
+      <table style="font-size:.72rem">
+        <tr><th>服务</th><th>重试</th><th>熔断</th></tr>
+        <tr><td>SEC EDGAR</td><td>3次 退避</td><td>10次/min</td></tr>
+        <tr><td>FMP</td><td>2次</td><td>5次/min</td></tr>
+        <tr><td>Finnhub</td><td>2次</td><td>5次/min</td></tr>
+        <tr><td>DeepSeek</td><td>2次</td><td>3次/min</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>4.5 测试覆盖</h3>
+      <div style="margin-bottom:.6rem">
+        <div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px">
+          <span>当前覆盖率</span><span style="color:var(--amber)">~20%</span>
+        </div>
+        <div class="progress"><div class="progress-bar" style="width:20%;background:var(--amber)"></div></div>
+      </div>
+      <div style="margin-bottom:.6rem">
+        <div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px">
+          <span>MVP 目标</span><span style="color:var(--green)">&gt;60%</span>
+        </div>
+        <div class="progress"><div class="progress-bar" style="width:60%;background:var(--green)"></div></div>
+      </div>
+      <table style="font-size:.72rem">
+        <tr><th>层级</th><th>当前</th><th>目标</th></tr>
+        <tr><td>纯函数 math</td><td>130 tests ✓</td><td>维持</td></tr>
+        <tr><td>I/O 节点</td><td>0</td><td>每节点 3-5 mock</td></tr>
+        <tr><td>API 路由</td><td>0</td><td>5-10 集成</td></tr>
+        <tr><td>前端</td><td>0</td><td>关键 5-10</td></tr>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════ 5. FRONTEND ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--green-dim);color:var(--green)">🖥</div>
+    五、前端 / UX 缺失
+  </div>
+  <div class="cards">
+
+    <div class="card">
+      <h3>5.1 移动端适配</h3>
+      <p>固定侧边栏 56/248px，双栏 2:3，小屏不可用。</p>
+      <ul>
+        <li>移动端单栏（先终端后组件）</li>
+        <li>侧边栏折叠 hamburger 菜单</li>
+        <li>卡片全宽，触控区域 ≥ 44px</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>5.2 Landing Page</h3>
+      <p>首页只有 ticker 输入框。获客需要产品介绍、功能展示、定价。</p>
+      <ul>
+        <li>Hero: 产品名 + 价值主张 + CTA</li>
+        <li>功能展示: 3-4 个核心功能截图</li>
+        <li>工作原理: 管线流程图</li>
+        <li>定价: Free / Pro / Enterprise</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>5.3 合规页面</h3>
+      <p>金融工具必需：免责声明、隐私政策、服务条款。</p>
+      <ul>
+        <li><code>/disclaimer</code> — 不构成投资建议</li>
+        <li><code>/privacy</code> — 数据收集/使用/共享</li>
+        <li><code>/terms</code> — 服务条款</li>
+        <li>页脚 + 分析结果页免责横幅</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════ 6. NEW FILES ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--surface-2);color:var(--text-muted)">📁</div>
+    六、新增文件汇总
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem">
+    <div class="card" style="padding:.8rem 1rem">
+      <h3 style="color:var(--red)">后端（11 文件）</h3>
+      <ul>
+        <li><code>db.py</code> — 数据库连接池</li>
+        <li><code>models/user.py</code> — 用户模型</li>
+        <li><code>models/analysis.py</code> — 分析结果模型</li>
+        <li><code>services/auth.py</code> — JWT + 密码哈希</li>
+        <li><code>api/auth_routes.py</code> — /register /login /refresh</li>
+        <li><code>api/health.py</code> — /health /ready</li>
+        <li><code>middleware/rate_limit.py</code> — 限流</li>
+        <li><code>middleware/request_id.py</code> — 请求 ID</li>
+        <li><code>alembic/</code> — 数据库迁移</li>
+        <li><code>Dockerfile</code></li>
+        <li><code>docker-compose.yml</code></li>
+      </ul>
+    </div>
+
+    <div class="card" style="padding:.8rem 1rem">
+      <h3 style="color:var(--green)">前端（11 文件）</h3>
+      <ul>
+        <li><code>(marketing)/page.tsx</code> — Landing Page</li>
+        <li><code>(legal)/disclaimer/page.tsx</code></li>
+        <li><code>(legal)/privacy/page.tsx</code></li>
+        <li><code>(legal)/terms/page.tsx</code></li>
+        <li><code>(auth)/login/page.tsx</code></li>
+        <li><code>(auth)/register/page.tsx</code></li>
+        <li><code>history/page.tsx</code></li>
+        <li><code>watchlist/page.tsx</code></li>
+        <li><code>components/auth/</code></li>
+        <li><code>watchlist-button.tsx</code></li>
+        <li><code>Dockerfile</code></li>
+      </ul>
+    </div>
+
+    <div class="card" style="padding:.8rem 1rem">
+      <h3 style="color:var(--blue)">DevOps（3 文件）</h3>
+      <ul>
+        <li><code>.github/workflows/ci.yml</code></li>
+        <li><code>.github/workflows/deploy.yml</code></li>
+        <li><code>nginx.conf</code></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ 7. ROADMAP ════════════ -->
+<div class="section">
+  <div class="section-title">
+    <div class="section-icon" style="background:var(--green-dim);color:var(--green)">🗺</div>
+    七、建议实施顺序
+  </div>
+
+  <div class="phase">
+    <div class="phase-marker" style="background:var(--red)"></div>
+    <div class="phase-body">
+      <div class="phase-title">Phase 1：安全基线 <span class="badge badge-crit">上线前必须</span></div>
+      <div class="phase-items">
+        <span>速率限制</span>
+        <span>SSE 限连</span>
+        <span>缓存 LRU</span>
+        <span>CORS 收紧</span>
+        <span>参数校验</span>
+        <span>Prompt 防注入</span>
+        <span>错误脱敏</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-marker" style="background:var(--amber)"></div>
+    <div class="phase-body">
+      <div class="phase-title">Phase 2：用户系统 + 持久化 <span class="badge badge-warn">商业基础</span></div>
+      <div class="phase-items">
+        <span>PostgreSQL + Redis</span>
+        <span>Docker Compose</span>
+        <span>JWT 认证</span>
+        <span>分析结果存储</span>
+        <span>健康检查</span>
+        <span>CI/CD</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-marker" style="background:var(--blue)"></div>
+    <div class="phase-body">
+      <div class="phase-title">Phase 3：商业功能 <span class="badge badge-info">产品完整性</span></div>
+      <div class="phase-items">
+        <span>分析历史</span>
+        <span>关注列表</span>
+        <span>PDF 导出</span>
+        <span>分享链接</span>
+        <span>Landing Page</span>
+        <span>合规页面</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-marker" style="background:var(--green)"></div>
+    <div class="phase-body">
+      <div class="phase-title">Phase 4：增长引擎 <span class="badge badge-ok">用户增长</span></div>
+      <div class="phase-items">
+        <span>价格/事件预警</span>
+        <span>多股票对比</span>
+        <span>移动端适配</span>
+        <span>订阅/付费</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════ FOOTER ════════════ -->
+<div style="margin-top:3rem;padding-top:1rem;border-top:1px solid var(--border);font-size:.7rem;color:var(--text-muted);text-align:center">
+  AlphaQuant MVP Gap Analysis v1.0 &nbsp;|&nbsp; Generated 2026-04-23 &nbsp;|&nbsp; Detailed breakdown: <code>MVP-GAP.md</code>
+</div>
+
+</body>
+</html>

@@ -51,7 +51,9 @@ async def strategy_node(
 
     try:
         rel_val = state.get("relative_valuation_result")
-        return await _run_strategy(financials, dcf, rel_val, writer)
+        sentiment_result = state.get("event_sentiment_result")
+        event_impact_result = state.get("event_impact_result")
+        return await _run_strategy(financials, dcf, rel_val, sentiment_result, event_impact_result, writer)
     except Exception as e:
         logger.exception("Strategy analysis failed for %s", financials.ticker if financials else "unknown")
         writer(ErrorEvent(
@@ -71,11 +73,21 @@ async def strategy_node(
 async def _run_strategy(
     financials: Any, dcf: dict[str, Any],
     relative_valuation_result: dict[str, Any] | None,
+    event_sentiment_result: dict[str, Any] | None,
+    event_impact_result: dict[str, Any] | None,
     writer: StreamWriter,
 ) -> dict[str, Any]:
+    # Use recalculated DCF intrinsic value if available
     intrinsic: float = dcf["intrinsic_value_per_share"]
     ticker = financials.ticker
     reasoning: list[str] = []
+
+    if (
+        event_impact_result
+        and event_impact_result.get("recalculated_dcf", {}).get("intrinsic_value_per_share")
+    ):
+        intrinsic = event_impact_result["recalculated_dcf"]["intrinsic_value_per_share"]
+        reasoning.append("Using event-impact-adjusted DCF intrinsic value")
 
     # --- Get current market price (reuse from relative_valuation if available) ---
     writer(AgentThinkingEvent(
@@ -194,6 +206,28 @@ async def _run_strategy(
                 content=relative_signal_note,
             ).model_dump())
 
+    # --- Sentiment adjustment ---
+    sentiment_delta = 0.0
+    sentiment_note = ""
+    sentiment = event_sentiment_result
+    if sentiment and sentiment.get("sentiment_adjustment"):
+        adj = sentiment["sentiment_adjustment"]
+        sentiment_delta = adj.get("margin_of_safety_pct_delta", 0)
+        sentiment_note = adj.get("reasoning", "")
+        if sentiment_delta != 0:
+            adjusted_mos = mos_pct + sentiment_delta
+            reasoning.append(
+                f"Sentiment adjustment: {sentiment_note} (Δ{sentiment_delta:+.0f}%)"
+            )
+            writer(AgentThinkingEvent(
+                node="strategy",
+                content=(
+                    f"Margin of safety adjusted by {sentiment_delta:+.0f}% "
+                    f"due to sentiment ({sentiment.get('sentiment_label', 'N/A')}). "
+                    f"Adjusted MoS: {adjusted_mos:.1f}%"
+                ),
+            ).model_dump())
+
     # --- Emit strategy dashboard ---
     strategy_result = {
         "current_price": current_price,
@@ -205,6 +239,8 @@ async def _run_strategy(
         "current_pe": current_pe,
         "pe_percentile": pe_percentile,
         "historical_pe": historical_pe if historical_pe else None,
+        "sentiment_delta": sentiment_delta,
+        "sentiment_note": sentiment_note,
     }
 
     writer(ComponentEvent(

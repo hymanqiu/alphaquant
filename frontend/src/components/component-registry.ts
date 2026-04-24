@@ -12,6 +12,8 @@ const registry: Record<string, ComponentType<any>> = {
   strategy_dashboard: lazy(() => import("./analysis/strategy-dashboard")),
   source_table: lazy(() => import("./analysis/source-table")),
   relative_valuation_card: lazy(() => import("./analysis/relative-valuation-card")),
+  sentiment_card: lazy(() => import("./analysis/sentiment-card")),
+  event_impact_card: lazy(() => import("./analysis/event-impact-card")),
 };
 
 export function getComponent(type: string): ComponentType<any> | null {
