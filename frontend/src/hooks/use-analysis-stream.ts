@@ -18,6 +18,10 @@ const PIPELINE_NODES = [
   { node: "event_sentiment", label: "Analyzing Event Sentiment" },
   { node: "event_impact", label: "Analyzing Event Impact" },
   { node: "strategy", label: "Generating Entry Strategy" },
+  { node: "qualitative_analysis", label: "Extracting 10-K MD&A Insights" },
+  { node: "risk_yoy_diff", label: "Comparing 10-K Risks YoY" },
+  { node: "moat_analysis", label: "Scoring Economic Moat (7 Powers)" },
+  { node: "investment_thesis", label: "Drafting Investment Thesis" },
   { node: "logic_trace", label: "Tracing Data Sources" },
 ] as const;
 

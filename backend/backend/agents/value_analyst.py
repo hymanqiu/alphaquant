@@ -1,6 +1,6 @@
 """LangGraph value analyst workflow.
 
-Orchestrates: fetch_sec_data -> financial_health_scan -> dynamic_dcf -> relative_valuation -> event_sentiment -> event_impact -> strategy -> logic_trace
+Orchestrates: fetch_sec_data -> financial_health_scan -> dynamic_dcf -> relative_valuation -> event_sentiment -> event_impact -> strategy -> qualitative_analysis -> risk_yoy_diff -> moat_analysis -> investment_thesis -> logic_trace
 """
 
 from __future__ import annotations
@@ -25,8 +25,12 @@ from .nodes.dcf_model import dcf_node
 from .nodes.event_impact import event_impact_node
 from .nodes.event_sentiment import event_sentiment_node
 from .nodes.financial_health import financial_health_node
+from .nodes.investment_thesis import investment_thesis_node
 from .nodes.logic_trace import logic_trace_node
+from .nodes.moat_analysis import moat_analysis_node
+from .nodes.qualitative_analysis import qualitative_analysis_node
 from .nodes.relative_valuation import relative_valuation_node
+from .nodes.risk_yoy_diff import risk_yoy_diff_node
 from .nodes.strategy import strategy_node
 
 
@@ -182,6 +186,10 @@ def build_value_analyst_graph() -> StateGraph:
     graph.add_node("event_sentiment", event_sentiment_node)
     graph.add_node("event_impact", event_impact_node)
     graph.add_node("strategy", strategy_node)
+    graph.add_node("qualitative_analysis", qualitative_analysis_node)
+    graph.add_node("risk_yoy_diff", risk_yoy_diff_node)
+    graph.add_node("moat_analysis", moat_analysis_node)
+    graph.add_node("investment_thesis", investment_thesis_node)
     graph.add_node("logic_trace", logic_trace_node)
 
     graph.add_edge(START, "fetch_sec_data")
@@ -195,7 +203,11 @@ def build_value_analyst_graph() -> StateGraph:
     graph.add_edge("relative_valuation", "event_sentiment")
     graph.add_edge("event_sentiment", "event_impact")
     graph.add_edge("event_impact", "strategy")
-    graph.add_edge("strategy", "logic_trace")
+    graph.add_edge("strategy", "qualitative_analysis")
+    graph.add_edge("qualitative_analysis", "risk_yoy_diff")
+    graph.add_edge("risk_yoy_diff", "moat_analysis")
+    graph.add_edge("moat_analysis", "investment_thesis")
+    graph.add_edge("investment_thesis", "logic_trace")
     graph.add_edge("logic_trace", END)
 
     return graph

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AuthProvider } from "@/context/auth-context";
 import { HistoryProvider } from "@/context/history-context";
 import "./globals.css";
 
@@ -29,7 +30,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="h-full overflow-hidden">
-        <HistoryProvider>{children}</HistoryProvider>
+        <AuthProvider>
+          <HistoryProvider>{children}</HistoryProvider>
+        </AuthProvider>
       </body>
     </html>
   );
