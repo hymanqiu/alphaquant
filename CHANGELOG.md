@@ -6,10 +6,230 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
+| v0.7.0 | 2026-04-25 | feat | **认证 + 订阅分级（Phase 2）**：邮箱/密码 + Magic Link + Google OAuth 三种登录方式；PostgreSQL 持久化；JWT 会话；4 个 Pro 节点按 user.tier 门控（free 用户看到锁定预览卡）；admin 可手动升级用户为 Pro。新增 `services/auth/` 模块、Alembic 迁移、AuthProvider Context、登录/注册页 |
+| v0.6.0 | 2026-04-25 | feat | **5 个 LLM Pro 节点（Phase 3）**：投资论点生成器、10-K MD&A 定性分析、10-K Risk Factors 抽取、10-K YoY 风险变化对比、Hamilton Helmer 7 Powers 护城河评分。统一逐字引文核验防幻觉；分析管线从 8 节点扩至 12 节点 |
+| v0.5.0 | 2026-04-24 | feat | **LLM 基础设施 + 成本围栏（Phase 1）**：统一 LLMClient + Prompt YAML 库 + Provider 抽象 + Token 计费；BudgetGate（全局/per-IP 双闸熔断）+ IP 限流 + RuntimeSettings（admin 可热改阈值）+ `/api/admin/*` 接口（usage / settings / settings/reset） |
 | v0.4.0 | 2026-04-22 | feat | 事件影响分析：两步 LLM 筛选重大新闻 → 自动调整 DCF 参数 → 重算内在价值。改进新闻获取（7天分批、公司名匹配、权威来源白名单、SEC 8-K 整合） |
 | v0.3.0 | 2026-04-21 | feat | 消息面情绪修正：Finnhub 新闻 + 内部人情绪 → 综合评分 → 安全边际调整。新增 Finnhub 客户端、DeepSeek LLM 情绪分析、sentiment_card 组件 |
 | v0.2.0 | 2026-04-17 | feat | 相对估值（市场乘数法）：当前乘数 + 历史百分位 + 同业对比。新增 FMP API 客户端、relative_valuation_card 组件 |
 | v0.1.0 | 2026-04-17 | — | 初始版本：SEC EDGAR 数据获取、财务健康扫描、DCF 估值建模、买入策略、数据溯源、SSE + Generative UI |
+
+---
+
+## v0.7.0 — 认证 + 订阅分级（Phase 2）
+
+**日期：** 2026-04-25
+
+### 概要
+
+引入完整的用户身份系统。三种登录方式（邮箱/密码、Magic Link、Google OAuth）共用同一份用户/身份表，PostgreSQL 持久化，JWT cookie 维持会话。同时把 5 个 LLM Pro 节点中的 4 个（thesis / qualitative / risk_yoy_diff / moat）按 `user.tier` 门控：免费用户看到锁定预览卡片 + Upgrade CTA，付费用户跑完整 LLM 流程。Admin 通过 `PATCH /api/admin/users/{email}/tier` 手动升降级（Stripe 留待后续）。
+
+### 后端变更
+
+#### 新增依赖
+
+`sqlalchemy[asyncio]` / `asyncpg` / `alembic` / `bcrypt` / `python-jose[cryptography]` / `authlib` / `itsdangerous` / `email-validator`
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/backend/services/db.py` | Async SQLAlchemy engine + session factory + `is_db_configured()` 优雅降级 + lifespan 关闭钩子 |
+| `backend/backend/services/auth/__init__.py` | Auth 模块对外接口（User / AuthService / 各 dependencies） |
+| `backend/backend/services/auth/models.py` | `User` 与 `IdentityProvider` ORM；email 唯一，每用户每种 auth 方式至多一条 identity 行 |
+| `backend/backend/services/auth/passwords.py` | bcrypt 哈希 / 校验（cost=12） |
+| `backend/backend/services/auth/tokens.py` | JWT (HS256) 签发 / 解码；7 天 TTL；`SessionClaims` dataclass |
+| `backend/backend/services/auth/service.py` | `AuthService`：register/login/upsert_magic_link_user/upsert_google_user/set_tier；统一处理 identity 行链接和 last_login_at |
+| `backend/backend/services/auth/magic_link.py` | `itsdangerous` 签名 token + Resend HTTP API 发件；无 key 时打印到 stderr + 返回 `dev_link` 兜底 |
+| `backend/backend/services/auth/google_oauth.py` | authlib OIDC 客户端配置 |
+| `backend/backend/services/auth/dependencies.py` | FastAPI deps：`get_current_user` / `get_optional_user` / `require_pro` / `require_admin_tier`；从 `Authorization: Bearer` 或 `aq_session` cookie 读 token |
+| `backend/backend/api/auth.py` | 8 个路由：邮箱注册/登录、Magic Link 发送/验证、Google start/callback、me、logout |
+| `backend/backend/agents/nodes/_pro_gate.py` | 共享 helper：`is_pro_user(state)` 与 `emit_lock(...)`；4 Pro 节点共用 |
+| `backend/alembic/env.py` + `script.py.mako` + `versions/20260425_0001_init_users.py` | Alembic 异步迁移基础设施 + 首次迁移（users / identity_providers + CHECK 约束） |
+| `backend/alembic.ini` | Alembic 配置（DSN 由 env 注入） |
+| `backend/.env.example` | 完整的 env 变量模板 + 说明 |
+| `frontend/src/lib/auth-api.ts` | 类型化 fetch wrappers：register/login/sendMagicLink/verifyMagicLink/fetchMe/logout |
+| `frontend/src/context/auth-context.tsx` | `<AuthProvider>` + `useAuth()` hook；`status` ∈ {loading, authenticated, anonymous} |
+| `frontend/src/app/auth/login/page.tsx` | 三 tab 登录页（Password / Magic link / Google） |
+| `frontend/src/app/auth/register/page.tsx` | 邮箱密码注册 |
+| `frontend/src/app/auth/magic-link/verify/page.tsx` | 接 `?token=...`，调 verify 端点 |
+| `frontend/src/components/analysis/pro-locked-card.tsx` | 共享锁定预览卡（4 个 Pro 节点的 locked component_type 都映射到这个） |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `backend/backend/config.py` | 新增 `database_url` / `default_user_tier` / `jwt_*` / `magic_link_*` / `resend_*` / `google_oauth_*` 字段 |
+| `backend/backend/main.py` | 加载 `auth_router`；新增 `SessionMiddleware`（OAuth state cookie）；lifespan 关闭 DB engine |
+| `backend/backend/api/routes.py` | `/analyze` 注入 `Depends(get_optional_user)`；从 user 读 tier 写入 `initial_state["user_tier"]` |
+| `backend/backend/api/admin.py` | 新增 `PATCH /api/admin/users/{email}/tier` 手动升降级 |
+| `backend/backend/models/agent_state.py` | 新增 `user_tier: str` 字段 |
+| `backend/backend/agents/nodes/{investment_thesis,qualitative_analysis,risk_yoy_diff,moat_analysis}.py` | 节点开头加 `if not is_pro_user(state): return emit_lock(...).payload` 短路 |
+| `frontend/src/app/layout.tsx` | 在 `HistoryProvider` 外层包 `AuthProvider` |
+| `frontend/src/lib/types.ts` | 新增 `Tier` / `AuthUser` / `AuthSessionResponse` 类型 |
+| `frontend/src/components/component-registry.ts` | 注册 4 个 `*_locked_card` 全部映射到 `pro-locked-card.tsx` |
+
+### 数据库 schema
+
+```sql
+users (
+  id, email UNIQUE, password_hash NULL, tier CHECK (free|pro|admin),
+  is_active, email_verified, display_name,
+  created_at, updated_at, last_login_at
+)
+identity_providers (
+  id, user_id FK→users, kind CHECK (email_password|magic_link|google),
+  external_id, created_at, last_used_at,
+  UNIQUE (user_id, kind), UNIQUE (kind, external_id)
+)
+```
+
+### 验证覆盖
+
+- ✅ bcrypt 哈希 + 校验 + JWT 签发/解码往返
+- ✅ Magic-link `itsdangerous` 签名 token 往返；无 RESEND_KEY 时返回 `dev_link`
+- ✅ 4 个 Pro 节点 free 路径全部正确发出 `*_locked_card` ComponentEvent，state 字段为 None
+- ✅ 12 个 LangGraph 节点全部装载，15 个 API 路由全部注册
+- ✅ Frontend 类型干净
+
+### 已知限制 / 后续
+
+- Stripe 订阅暂未接入 — Pro 升级走 admin 手动 PATCH
+- 邮箱验证流程暂未实现（Magic-link 自动标记 `email_verified=True`，密码注册标记为 False）
+- 没有"忘记密码"流程（用户可以走 Magic-link 重新登录）
+
+---
+
+## v0.6.0 — 5 个 LLM Pro 节点（Phase 3）
+
+**日期：** 2026-04-25
+
+### 概要
+
+在 LLM 基础设施（v0.5.0）之上叠加 5 个研究密集型 LLM 节点，把分析管线从 8 节点扩展到 12 节点。每个 Pro 节点统一遵循「**LLM 输出 → Pydantic 校验 → 逐字引文核验 → 渲染**」防幻觉链路。
+
+### 管线变更
+
+```
+v0.5.0: SEC → 财务健康 → DCF → 相对估值 → 情绪 → 事件影响 → 策略 → 溯源（8 节点）
+v0.6.0: ... → 策略 → 定性分析(MD&A+RF) → YoY风险对比 → 护城河评分 → 投资论点 → 溯源（12 节点）
+```
+
+### 5 个新节点
+
+| # | 节点 | 输入数据 | LLM 调用 | 输出 |
+|---|------|---------|---------|------|
+| 1 | `investment_thesis` | 全部上游 state | 1 次 (`thesis` task_tag) | 结构化研报：headline + bull/bear/risks + recommendation + confidence |
+| 2 | `qualitative_analysis` (MD&A) | 10-K Item 7 | 1 次 (`mdna`) | tone + forward guidance + 增长驱动 + 管理层担忧 + 逐字引文 |
+| 3 | `qualitative_analysis` (Risk Factors) | 10-K Item 1A | 1 次 (`risk_factors`) | 8 类风险分类 + Top 5 risks 带 severity + concentration risk |
+| 4 | `risk_yoy_diff` | 当年 + 去年 10-K | 1 次 (`risk_yoy_diff`) | new / removed / escalated / de-escalated 四桶变化 + 双源引文核验 |
+| 5 | `moat_analysis` | 10-K Item 1 | 1 次 (`moat`) | Helmer 7 Powers 各 0-10 评分 + classification + 不可核验时 demote 到 0 |
+
+#### MD&A + Risk Factors 在同一节点并行（asyncio.gather）
+
+`qualitative_analysis` 一次拉取 10-K，并行抽取 MD&A 和 Risk Factors 两节，部分失败仍然展示成功的那部分卡片。
+
+### 防幻觉机制（贯穿 5 个节点）
+
+1. **System prompt 强约束**：明令"只能从 USER_CONTENT 边界内提取，禁止使用训练数据知识"。
+2. **Pydantic 模型校验**：每个 prompt 对应一个 response_model，类型/枚举/长度全验。
+3. **逐字引文核验**：所有 `notable_quotes` / `top_risks[*].quote` / `evidence_quote` 都经过 `verify_quotes()` —— 必须是源文本的 substring（白空格归一化 + smart-quote 归一化），否则丢弃整条 risk / 把 power 评分 demote 到 0。
+
+### 关键实现细节
+
+#### 后端新增
+
+| 类别 | 文件 |
+|------|------|
+| 共用工具 | `services/tenk_parser.py`（`extract_mdna` / `extract_risk_factors` / `extract_business` 三层正则回退 + `smart_truncate` 头尾截断 + `truncate_head` 优先级头部截断） |
+| Prompts | `prompts/{investment_thesis,mdna_analysis,risk_factors,risk_yoy_diff,moat_analysis}_v1.yaml` |
+| 节点 | `agents/nodes/{investment_thesis,qualitative_analysis,risk_yoy_diff,moat_analysis}.py` |
+| SEC | `services/sec_client.py` 新增 `fetch_10k(cik, n_back)` 含 6 条 FIFO HTML 缓存；同时**修复 8-K 抓取的嵌套 JSON 路径 bug**（之前一直静默返回空） |
+
+#### 前端新增
+
+| 文件 | 说明 |
+|------|------|
+| `analysis/investment-thesis-card.tsx` | Bull/Bear/Risks 三栏 + recommendation 徽章 + confidence |
+| `analysis/qualitative-insights-card.tsx` | tone 徽章 + forward guidance + 双栏（drivers/concerns）+ verbatim quotes |
+| `analysis/risk-factors-card.tsx` | 风险分类徽章条 + Top risks 列表（category 图标 + severity 徽章 + 引文）+ concentration callout |
+| `analysis/risk-yoy-diff-card.tsx` | 4 桶 2x2 网格；escalated/de_escalated 显示 prior↔current 并排引文 |
+| `analysis/moat-analysis-card.tsx` | 7 power 渐变进度条 + primary badge + verbatim 引文 + overall = max(scores) |
+
+### 成本影响
+
+| 节点 | DeepSeek 单次 | GPT-4o 单次 |
+|------|---------------|-------------|
+| sentiment | ~$0.0005 | ~$0.01 |
+| event_filter + event_analysis | ~$0.0007 × 2 | ~$0.015 × 2 |
+| mdna | ~$0.001 | ~$0.025 |
+| risk_factors | ~$0.001 | ~$0.025 |
+| risk_yoy_diff | **~$0.0035**（最贵） | **~$0.10**（最贵） |
+| moat | ~$0.001 | ~$0.025 |
+| thesis | ~$0.0008 | ~$0.02 |
+| **完整分析** | **~$0.01** | **~$0.25** |
+
+每天 $5 全局预算可跑 **~50 次完整分析**（DeepSeek）或 **~20 次**（GPT-4o）。
+
+---
+
+## v0.5.0 — LLM 基础设施 + 成本围栏（Phase 1）
+
+**日期：** 2026-04-24
+
+### 概要
+
+把分散在 `llm_sentiment.py` / `event_impact.py` 中的两处 LLM 调用收编到统一的 `LLMClient` 里，建立 Prompt YAML 库 + Provider 抽象 + Token 计费，并叠加三层成本围栏（IP 限流 + per-IP LLM 预算 + 全局 LLM 预算）。新增 admin API 让运维不重启就能调阈值。
+
+### 后端新增
+
+| 文件 | 说明 |
+|------|------|
+| `services/llm/__init__.py` | 模块对外接口 |
+| `services/llm/client.py` | `LLMClient.complete_json(prompt_name, variables, response_model, task_tag)` 统一入口；含模板渲染 / 输入净化 / 重试 / Pydantic 校验 / 计费 |
+| `services/llm/providers.py` | `OpenAICompatibleProvider`（DeepSeek / OpenAI / 任何 OpenAI 协议兼容） |
+| `services/llm/sanitize.py` | 输入净化 + 注入检测 + `<<<USER_CONTENT>>>` 边界包裹 |
+| `services/llm/accounting.py` | `AccountingStore`：每次调用结构化日志 + 24h 滑动窗成本聚合 + per-IP 维度 |
+| `services/llm/budget.py` | `BudgetGate`：每次 LLM 调用前过双闸（global + per-IP），命中抛 `LLMBudgetExceeded` |
+| `services/llm/errors.py` | `LLMError` 基类 + `LLMConfigError` / `LLMProviderError` / `LLMParseError` / `LLMBudgetExceeded` |
+| `services/runtime_settings.py` | env 默认 + 内存层 admin 覆盖；`RuntimeSettings.snapshot()` / `update()` / `reset()` 线程安全 |
+| `services/request_context.py` | `contextvars.ContextVar` 透明传递 client_ip 到所有 async 调用栈 |
+| `services/rate_limit.py` | `IPRateLimiter` 24h 滑动窗 per-bucket per-IP 计数 |
+| `prompts/__init__.py` | YAML 模板加载器 + 缓存 + 启动期校验 |
+| `prompts/{sentiment,event_filter,event_analysis}_v1.yaml` | 从 v0.3 / v0.4 节点中迁出的 prompt |
+| `api/admin.py` | `/api/admin/{settings, settings/reset, usage}` Bearer-token 鉴权 |
+
+### 后端修改
+
+- `services/llm_sentiment.py` / `agents/nodes/event_impact.py` 全部改走 `LLMClient.complete_json`，原 prompt 字符串迁出到 YAML
+- `api/routes.py` 在 `/analyze`、`/recalculate-dcf` 入口先过 `_enforce_rate_limit`，并 `bind_client_ip(ip)` 进 contextvar
+- `main.py` 注册 admin_router；shutdown 钩子改走 `services.llm.close_llm_client`
+- `config.py` 新增 `llm_*` / `rate_limit_*` / `admin_token` 字段
+- `pyproject.toml` 新增 `pyyaml`
+
+### Admin API 用法
+
+```bash
+# 看 24h 花费 + 限流命中
+curl -H "Authorization: Bearer $TOKEN" /api/admin/usage
+
+# 紧急提预算
+curl -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -d '{"llm_daily_budget_usd": 20.0}' \
+  /api/admin/settings
+
+# 一键回到 .env 默认
+curl -X POST -H "Authorization: Bearer $TOKEN" /api/admin/settings/reset
+```
+
+### 验证覆盖
+
+- ✅ 限流：第 4 次请求被拒（429 + Retry-After 86394）
+- ✅ 全局预算：模拟支出 $7 时所有 LLM 调用抛 `LLMBudgetExceeded(scope=global)`
+- ✅ Admin 动态调整：PATCH 后下次请求立即生效
+- ✅ 不重启回归默认：`/settings/reset` 清空覆盖
+
+---
 
 ## v0.4.0 — 事件影响分析（Event Impact Analysis）
 

@@ -1,3 +1,19 @@
+export type Tier = "free" | "pro" | "admin";
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  tier: Tier;
+  display_name: string | null;
+  email_verified: boolean;
+  created_at: string | null;
+}
+
+export interface AuthSessionResponse {
+  user: AuthUser;
+  token: string;
+}
+
 export type SSEStatus = "idle" | "connecting" | "connected" | "error" | "complete";
 
 export interface ThinkingMessage {
