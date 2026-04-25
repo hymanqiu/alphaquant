@@ -1,0 +1,44 @@
+# Local development stack for AlphaQuant.
+#
+# Spin up everything you need outside the FastAPI/Next.js processes:
+#
+#   docker compose up -d
+#
+# Stop / wipe:
+#
+#   docker compose down            # stop, keep data
+#   docker compose down -v         # stop AND wipe Postgres volume
+#
+# Default credentials match backend/.env (AQ_DATABASE_URL).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: alphaquant-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alpha
+      POSTGRES_PASSWORD: alpha
+      POSTGRES_DB: alphaquant
+      # Avoid surprises with TZ skew between host + container.
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      # Host port can be overridden via env var when 5432 is taken by
+      # another project. Example:
+      #   POSTGRES_PORT=5433 docker compose up -d
+      # Then update AQ_DATABASE_URL to use the same port.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - alphaquant_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` returns 0 once the DB accepts connections.
+      test: ["CMD-SHELL", "pg_isready -U alpha -d alphaquant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  alphaquant_pgdata:
+    name: alphaquant_pgdata

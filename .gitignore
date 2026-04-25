@@ -20,3 +20,15 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code (per-project local settings, contains user-specific perms)
+.claude/
+
+# Alembic local artifacts
+backend/alembic/__pycache__/
+
+# Pytest
+.pytest_cache/
+
+# Frontend incremental build cache
+frontend/tsconfig.tsbuildinfo
