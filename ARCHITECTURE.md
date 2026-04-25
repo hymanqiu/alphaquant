@@ -1,5 +1,25 @@
 # AlphaQuant - System Architecture & Workflow
 
+## 文档地图
+
+> 文档体系分三层：本文档 (系统全景) → `docs/nodes/` (节点详情) → `docs/decisions/` (架构决策)。
+> 详细的目录结构见下方 Section 2。
+
+**快速定位**:
+
+| 你想知道... | 去哪里 |
+|------------|--------|
+| 系统整体怎么跑的 | 继续读本文档 |
+| 某个节点的具体实现 | `docs/nodes/{编号}-{名称}.md` |
+| 某个设计为什么这样做 | `docs/decisions/{编号}-{主题}.md` |
+| 数据结构定义 | 代码是真相源: `backend/models/agent_state.py`, `events.py`, `financial.py` |
+| API 端点格式 | 本文档 Section 7: API Contract |
+| 版本变更历史 | `CHANGELOG.md` |
+| MVP 上线差距 | `MVP-GAP.md` |
+| AI Agent 开发指南 | `frontend/CLAUDE.md` |
+
+---
+
 ## 1. System Overview
 
 AlphaQuant is a white-box AI investment research system. It fetches raw SEC EDGAR filings, runs multi-step value analysis through a LangGraph state machine, and streams the reasoning process and results as Generative UI components to a React frontend in real-time via Server-Sent Events (SSE).
@@ -9,15 +29,16 @@ AlphaQuant is a white-box AI investment research system. It fetches raw SEC EDGA
 │                         Frontend (Next.js 16)                       │
 │                                                                     │
 │  ┌──────────────┐     ┌─────────────┐     ┌──────────────────────┐ │
-│  │  Home Page    │────>│  useSSE     │────>│  AnalysisLayout      │ │
-│  │  (Ticker Input)     │  (EventSource)    │  ┌────────┐┌───────┐│ │
-│  └──────────────┘     └──────┬──────┘     │  │Terminal ││Visual-││ │
-│                              │             │  │(思考链) ││izer   ││ │
-│                              │             │  └────────┘└───┬───┘│ │
+│  │  Home Page    │────>│  useSSE     │────>│  AppShell            │ │
+│  │  (Ticker Input)     │  (EventSource)    │  ┌──────────┐┌─────┐ │ │
+│  └──────────────┘     └──────┬──────┘     │  │Conversa- ││Analy-│ │ │
+│                              │             │  │tionPanel ││sisCa-│ │ │
+│                              │             │  │(思考链)  ││nvas  │ │ │
+│                              │             │  └──────────┘└──┬──┘ │ │
 │                              │             └────────────────┼────┘ │
 │                              │                              │      │
 │                    SSE Stream│              Component Registry      │
-│                    (实时推送) │              (lazy load 9 组件)     │
+│                    (实时推送) │              (lazy load 12 组件)    │
 └──────────────────────────────┼──────────────────────────────┼──────┘
                                │                              │
                         GET /api/analyze/{ticker}    POST /api/recalculate-dcf
@@ -98,75 +119,122 @@ AlphaQuant is a white-box AI investment research system. It fetches raw SEC EDGA
 ## 2. Directory Structure
 
 ```
-alpha/
+alphaquant/
+├── ARCHITECTURE.md                              # 系统架构全景 (你在这里)
+├── CHANGELOG.md                                 # 版本变更记录
+├── MVP-GAP.md                                   # MVP 差距分析与路线图
+│
+├── docs/
+│   ├── nodes/                                   # 节点详细文档 (8 个)
+│   │   ├── 01-fetch-sec-data.md                 #   Node 1: SEC EDGAR 数据获取
+│   │   ├── 02-financial-health.md               #   Node 2: 财务健康扫描
+│   │   ├── 03-dcf-model.md                      #   Node 3: DCF 估值建模
+│   │   ├── 04-relative-valuation.md             #   Node 4: 相对估值
+│   │   ├── 05-event-sentiment.md                #   Node 5: 消息面情绪分析
+│   │   ├── 06-event-impact.md                   #   Node 6: 事件影响 + DCF 重算
+│   │   ├── 07-strategy.md                       #   Node 7: 买入策略
+│   │   └── 08-logic-trace.md                    #   Node 8: SEC 数据溯源
+│   └── decisions/                               # 架构决策记录 ADR (5 个)
+│       ├── 001-xbrl-tag-fallback.md             #   XBRL 标签回退策略
+│       ├── 002-two-stage-dcf.md                 #   两阶段 DCF 设计
+│       ├── 003-stream-writer-over-astream.md    #   StreamWriter 选择
+│       ├── 004-separate-recalc-endpoint.md      #   独立重算端点
+│       └── 005-fmp-stable-api.md                #   FMP /stable/ API 选择
+│
 ├── backend/
-│   ├── pyproject.toml                          # Python 依赖定义
+│   ├── pyproject.toml                           # Python 依赖定义
 │   ├── backend/
-│   │   ├── main.py                             # FastAPI 入口 + lifespan 管理
-│   │   ├── config.py                           # pydantic-settings 配置 (自动发现 .env)
+│   │   ├── main.py                              # FastAPI 入口 + lifespan 管理
+│   │   ├── config.py                            # pydantic-settings 配置 (自动发现 .env)
 │   │   ├── models/
-│   │   │   ├── sec.py                          # SEC EDGAR 原始响应模型
-│   │   │   ├── financial.py                    # 归一化后的财务指标模型
-│   │   │   ├── agent_state.py                  # LangGraph TypedDict 状态
-│   │   │   └── events.py                       # SSE 事件模型 (Generative UI 协议)
+│   │   │   ├── sec.py                           # SEC EDGAR 原始响应模型
+│   │   │   ├── financial.py                     # 归一化后的财务指标模型
+│   │   │   ├── agent_state.py                   # LangGraph TypedDict 状态
+│   │   │   └── events.py                        # SSE 事件模型 (Generative UI 协议)
 │   │   ├── services/
-│   │   │   ├── ticker_resolver.py              # Ticker → CIK 映射
-│   │   │   ├── sec_client.py                   # EDGAR HTTP 客户端 (httpx)
-│   │   │   ├── sec_agent.py                    # XBRL 归一化层 (核心领域逻辑)
-│   │   │   ├── market_data.py                  # FMP 市场行情客户端 (httpx)
-│   │   │   ├── finnhub_client.py               # Finnhub 新闻/内部人情绪客户端
-│   │   │   └── llm_sentiment.py                # DeepSeek LLM 新闻情绪分析
+│   │   │   ├── ticker_resolver.py               # Ticker → CIK 映射
+│   │   │   ├── sec_client.py                    # EDGAR HTTP 客户端 (httpx, 10 req/s)
+│   │   │   ├── sec_agent.py                     # XBRL 归一化层 (核心领域逻辑)
+│   │   │   ├── market_data.py                   # FMP 市场行情客户端 (httpx)
+│   │   │   ├── finnhub_client.py                # Finnhub 新闻/内部人情绪客户端
+│   │   │   └── llm_sentiment.py                 # DeepSeek LLM 新闻情绪分析
 │   │   ├── agents/
-│   │   │   ├── value_analyst.py                # LangGraph StateGraph 编排
+│   │   │   ├── value_analyst.py                 # LangGraph StateGraph 编排
 │   │   │   └── nodes/
-│   │   │       ├── financial_health.py         # 节点1: 财务健康扫描
-│   │   │       ├── dcf_model.py                # 节点2: 动态 DCF 建模
-│   │   │       ├── relative_valuation.py       # 节点3: 相对估值 (市场乘数, 主节点)
-│   │   │       ├── relative_valuation_math.py  # 节点3: 纯计算函数 (无I/O)
-│   │   │       ├── event_sentiment.py          # 节点4: 消息面情绪分析 (主节点)
-│   │   │       ├── event_sentiment_math.py     # 节点4: 纯计算函数 (无I/O)
-│   │   │       ├── event_impact.py             # 节点5: 事件影响分析 (两步LLM+DCF重算)
-│   │   │       ├── event_impact_math.py        # 节点5: 纯计算函数 (参数注册表/调整/重算)
-│   │   │       ├── strategy.py                 # 节点6: 安全边际 & 买入策略
-│   │   │       └── logic_trace.py              # 节点7: 数据溯源
+│   │   │       ├── financial_health.py          # 节点 2: 财务健康扫描
+│   │   │       ├── dcf_model.py                 # 节点 3: 动态 DCF 建模 + compute_dcf()
+│   │   │       ├── relative_valuation.py        # 节点 4: 相对估值 (主节点, 含 I/O)
+│   │   │       ├── relative_valuation_math.py   # 节点 4: 纯计算函数 (无 I/O)
+│   │   │       ├── event_sentiment.py           # 节点 5: 消息面情绪分析 (主节点)
+│   │   │       ├── event_sentiment_math.py      # 节点 5: 纯计算函数 (过滤/评分/标签)
+│   │   │       ├── event_impact.py              # 节点 6: 事件影响 (两步 LLM + DCF 重算)
+│   │   │       ├── event_impact_math.py         # 节点 6: 纯计算函数 (参数注册表/调整/重算)
+│   │   │       ├── industry_mapping.py          # 行业映射工具 (SIC → 行业)
+│   │   │       ├── strategy.py                  # 节点 7: 安全边际 & 买入策略
+│   │   │       └── logic_trace.py               # 节点 8: SEC 数据溯源
+│   │   ├── utils/
+│   │   │   └── __init__.py                      # 通用工具函数
 │   │   └── api/
-│   │       ├── routes.py                       # SSE + 重算端点
-│   │       └── dependencies.py                 # 内存缓存 (DCF 重算用)
+│   │       ├── routes.py                        # SSE + 重算端点
+│   │       └── dependencies.py                  # 内存缓存 (DCF 重算用)
 │   └── tests/
+│       └── agents/nodes/
+│           ├── test_event_impact_math.py        # 事件影响计算单元测试
+│           ├── test_event_sentiment_math.py     # 情绪计算单元测试
+│           ├── test_industry_mapping.py         # 行业映射单元测试
+│           └── test_relative_valuation_math.py  # 相对估值计算单元测试
 │
 └── frontend/
+    ├── CLAUDE.md                               # AI Agent 开发指南 (EN)
     └── src/
         ├── app/
-        │   ├── layout.tsx                      # 根布局
-        │   ├── page.tsx                        # 首页 (Ticker 输入)
-        │   └── analyze/[ticker]/page.tsx       # 分析页 (动态路由)
+        │   ├── layout.tsx                       # 根布局
+        │   ├── page.tsx                         # 首页 (Ticker 输入)
+        │   └── analyze/[ticker]/page.tsx        # 分析页 (动态路由)
         ├── hooks/
-        │   ├── use-sse.ts                      # 底层 EventSource 封装
-        │   └── use-analysis-stream.ts          # 高层分析流 Hook
+        │   ├── use-sse.ts                       # 底层 EventSource 封装
+        │   └── use-analysis-stream.ts           # 高层分析流 Hook
+        ├── context/
+        │   └── history-context.tsx              # 分析历史 Context
         ├── components/
-        │   ├── agent-terminal.tsx              # 打字机效果终端
-        │   ├── visualizer.tsx                  # 动态组件挂载器
-        │   ├── component-registry.ts           # 类型 → React 组件映射
+        │   ├── component-registry.ts            # 类型 → React 组件映射
+        │   ├── analysis-canvas.tsx              # 分析画布 (动态组件挂载器)
+        │   ├── conversation-panel.tsx           # Agent 推理面板 (打字机效果)
+        │   ├── empty-state.tsx                  # 空状态占位
         │   ├── layout/
-        │   │   └── analysis-layout.tsx         # 双栏布局 + 重算逻辑
-        │   └── analysis/
-        │       ├── metric-table.tsx            # 关键指标表
-        │       ├── revenue-chart.tsx           # 营收柱状图
-        │       ├── fcf-chart.tsx               # FCF 历史+预测图
-        │       ├── financial-health-card.tsx    # 财务健康卡片
-        │       ├── dcf-result-card.tsx          # DCF 估值结果
-        │       ├── valuation-gauge.tsx          # 估值仪表
-        │       ├── assumption-slider.tsx        # 假设参数滑块
-        │       ├── relative-valuation-card.tsx  # 相对估值卡片 (乘数+百分位+同业)
-        │       ├── strategy-dashboard.tsx       # 估值热力仪表盘 (买入策略)
-        │       ├── sentiment-card.tsx           # 消息面情绪卡片 (仪表+新闻+内部人)
-        │       ├── event-impact-card.tsx       # 事件影响卡片 (参数对比+DCF重算+触发事件)
-        │       └── source-table.tsx             # SEC 数据溯源表
+        │   │   ├── app-shell.tsx                # 应用外壳 (路由 + 布局)
+        │   │   └── sidebar.tsx                  # 侧边栏 (历史/导航)
+        │   ├── analysis/
+        │   │   ├── chart-primitives.tsx         # 图表基础组件 (Recharts 封装)
+        │   │   ├── metric-table.tsx             # 关键指标表
+        │   │   ├── revenue-chart.tsx            # 营收柱状图
+        │   │   ├── fcf-chart.tsx                # FCF 历史+预测图
+        │   │   ├── financial-health-card.tsx    # 财务健康卡片
+        │   │   ├── dcf-result-card.tsx          # DCF 估值结果
+        │   │   ├── valuation-gauge.tsx          # 估值仪表
+        │   │   ├── assumption-slider.tsx        # 假设参数滑块
+        │   │   ├── relative-valuation-card.tsx  # 相对估值卡片 (乘数+百分位+同业)
+        │   │   ├── sentiment-card.tsx           # 消息面情绪卡片 (仪表+新闻+内部人)
+        │   │   ├── event-impact-card.tsx        # 事件影响卡片 (参数对比+DCF重算)
+        │   │   ├── strategy-dashboard.tsx       # 估值热力仪表盘 (买入策略)
+        │   │   └── source-table.tsx             # SEC 数据溯源表
+        │   └── ui/                              # shadcn/ui 基础组件
+        │       ├── badge.tsx
+        │       ├── button.tsx
+        │       ├── card.tsx
+        │       ├── input.tsx
+        │       ├── separator.tsx
+        │       ├── skeleton.tsx
+        │       ├── slider.tsx
+        │       ├── table.tsx
+        │       └── tabs.tsx
         └── lib/
-            ├── types.ts                        # TypeScript 类型定义
-            ├── constants.ts                    # API 地址常量
-            └── utils.ts                        # 工具函数
+            ├── types.ts                         # TypeScript 类型定义
+            ├── constants.ts                     # API 地址常量
+            └── utils.ts                         # 工具函数
 ```
+
+> **注**: Node 1 (`fetch_sec_data`) 的逻辑由 `sec_agent.py` (服务层) + `value_analyst.py` (编排层) 共同完成，无独立节点文件。`industry_mapping.py` 为 Node 4 (相对估值) 提供行业分类支持。
 
 ---
 
@@ -200,17 +268,18 @@ main.py: lifespan()
     │   └── 快捷按钮: [NVDA] [AAPL] [MSFT] [GOOGL] [AMZN]
     │
     ├── 用户输入 "NVDA" + Enter (或点击 NVDA 按钮)
-    │   └── router.push('/analyze/NVDA')
+    │   └── AppShell.setTicker("NVDA") — 状态更新, 无路由跳转
     │
-    └── app/analyze/[ticker]/page.tsx 渲染
+    └── 直接访问 /analyze/NVDA 时:
+        ├── app/analyze/[ticker]/page.tsx 渲染
         ├── const { ticker } = use(params)  // Next.js 16: params 是 Promise
-        └── <AnalysisLayout ticker="NVDA" />
+        └── <AppShell initialTicker="NVDA" />
 ```
 
 ### Phase 2: SSE Connection (Frontend → Backend)
 
 ```
-AnalysisLayout 挂载
+AppShell 挂载
     │
     ├── useAnalysisStream("NVDA")
     │   └── useSSE({ url: "http://localhost:8000/api/analyze/NVDA" })
@@ -220,8 +289,8 @@ AnalysisLayout 挂载
     │           └── status: "connecting" → "connected"
     │
     └── 渲染初始 UI
-        ├── AgentTerminal: "Initializing analysis..." (动画)
-        └── Visualizer: 空 (等待组件)
+        ├── ConversationPanel: "Initializing analysis..." (动画)
+        └── AnalysisCanvas: 空 (等待组件)
 ```
 
 ### Phase 3: Backend Graph Execution
@@ -260,9 +329,9 @@ routes.py: analyze_ticker("NVDA")
     │       health_metrics: None,
     │       health_assessment: None,
     │       dcf_result: None,
-    │       relative_valuation_result: None,   # 节点3填充 (相对估值)
-    │       event_sentiment_result: None,      # 节点4填充 (消息面情绪)
-    │       event_impact_result: None,         # 节点5填充 (事件影响+DCF重算)
+    │       relative_valuation_result: None,   # 节点4填充 (相对估值)
+    │       event_sentiment_result: None,      # 节点5填充 (消息面情绪)
+    │       event_impact_result: None,         # 节点6填充 (事件影响+DCF重算)
     │       strategy_result: None,
     │       source_map: None,
     │       reasoning_steps: [],  # Annotated[list, add] 追加模式
@@ -279,518 +348,34 @@ routes.py: analyze_ticker("NVDA")
                                                                │
 ```
 
-#### Node 1: `fetch_sec_data` (SEC 数据获取)
+#### 节点总览
 
-```
-fetch_sec_data_node(state, writer)
-    │
-    ├── writer(AgentThinkingEvent("Fetching SEC EDGAR filing data for NVDA..."))
-    │   └── → SSE event: agent_thinking
-    │       └── 前端 AgentTerminal 显示打字机动画
-    │
-    ├── sec_data_service.get_financials("NVDA")
-    │   │
-    │   ├── ticker_resolver.resolve("NVDA")
-    │   │   └── 查询内存缓存 → (cik=1045810, name="NVIDIA CORP")
-    │   │
-    │   ├── sec_client.get_company_facts(1045810)
-    │   │   ├── _rate_limit(): 确保间隔 ≥ 100ms (10 req/s)
-    │   │   ├── GET https://data.sec.gov/api/xbrl/companyfacts/CIK0001045810.json
-    │   │   │   └── Headers: User-Agent: "AlphaQuant Research contact@alphaquant.dev"
-    │   │   └── SECCompanyFacts.model_validate(resp.json())
-    │   │       └── 解析结构: {cik, entityName, facts: {us-gaap: {tag: SECFact}}}
-    │   │
-    │   └── _normalize(company_facts, "NVDA")
-    │       │
-    │       │  ┌─── 对每个财务字段执行 ───────────────────────────────────┐
-    │       │  │                                                          │
-    │       │  │  TAG_MAP 定义了 15 个字段的 XBRL 标签回退链:            │
-    │       │  │                                                          │
-    │       │  │  "revenue" → 尝试:                                      │
-    │       │  │    1. Revenues                ← NVDA 使用此标签          │
-    │       │  │    2. RevenueFromContract...ExcludingAssessedTax         │
-    │       │  │    3. RevenueFromContract...IncludingAssessedTax         │
-    │       │  │    4. SalesRevenueNet                                    │
-    │       │  │    5. SalesRevenueGoodsNet                               │
-    │       │  │                                                          │
-    │       │  │  "capital_expenditure" → 尝试:                          │
-    │       │  │    1. PaymentsToAcquirePropertyPlantAndEquipment         │
-    │       │  │    2. PaymentsToAcquireProductiveAssets ← NVDA 近年用此  │
-    │       │  │                                                          │
-    │       │  │  选择策略: 所有候选标签都尝试,                          │
-    │       │  │  选择 latest_year 最大的那个 (不是第一个匹配)           │
-    │       │  └──────────────────────────────────────────────────────────┘
-    │       │
-    │       │  ┌─── _extract_for_tag 提取逻辑 ───────────────────────────┐
-    │       │  │                                                          │
-    │       │  │  1. 根据 UNIT_MAP 选择单位:                             │
-    │       │  │     - 大部分字段: USD                                    │
-    │       │  │     - diluted_eps: USD/shares                            │
-    │       │  │     - diluted_shares: shares                             │
-    │       │  │                                                          │
-    │       │  │  2. 过滤条件:                                           │
-    │       │  │     - form == "10-K" (年报) AND fp == "FY" (全年)        │
-    │       │  │     - frame != None (只要有 frame 标签的规范值)          │
-    │       │  │                                                          │
-    │       │  │  3. Frame 去重逻辑 (核心):                              │
-    │       │  │     - "CY2024"   → 收入/利润等 duration 指标 ✓ 保留      │
-    │       │  │     - "CY2024Q4I"→ 资产/负债等 instant 指标 ✓ 保留       │
-    │       │  │     - "CY2024Q1" → 季度数据 ✗ 跳过 (正则 Q\d$ 过滤)    │
-    │       │  │                                                          │
-    │       │  │  4. 同一日历年有多个条目时, 取 filed 日期最新的          │
-    │       │  │                                                          │
-    │       │  │  5. 按 calendar_year 排序返回                            │
-    │       │  └──────────────────────────────────────────────────────────┘
-    │       │
-    │       ├── 计算 FCF = OCF - |CapEx| (按日历年匹配)
-    │       │
-    │       └── 返回 CompanyFinancials:
-    │           ├── revenue: 18 年 (2007-2025), 最新 $215.9B
-    │           ├── net_income: 19 年, 最新 $120.1B
-    │           ├── operating_cash_flow: 19 年, 最新 $102.7B
-    │           ├── capital_expenditure: 5 年, 最新 $6.0B
-    │           ├── free_cash_flow: 5 年, 最新 $96.7B (102.7 - 6.0)
-    │           ├── total_assets: 18 年, 最新 $206.8B
-    │           ├── stockholders_equity: 20 年, 最新 $157.3B
-    │           ├── long_term_debt: 14 年, 最新 $8.5B
-    │           ├── diluted_eps: 最新 $4.90
-    │           └── diluted_shares: 最新 24.5B 股
-    │
-    ├── writer(AgentThinkingEvent("Successfully loaded data for NVIDIA CORP"))
-    │   └── → SSE event: agent_thinking
-    │
-    ├── writer(ComponentEvent("metric_table", {title, metrics: [...]}))
-    │   └── → SSE event: component
-    │       └── 前端 Visualizer 挂载 MetricTable 组件
-    │           显示: Revenue $215.9B, Net Income $120.1B, FCF $96.7B, EPS $4.90
-    │
-    ├── writer(StepCompleteEvent("Loaded 5 financial data series"))
-    │   └── → SSE event: step_complete
-    │
-    └── return {
-            financials: CompanyFinancials(...),  # 写入共享状态
-            fetch_errors: [],
-            reasoning_steps: ["Fetched SEC data...", "Available: 5"],
-        }
-        │
-        └── _should_continue(state) → state["financials"] is not None → "continue"
-            └── 进入下一节点
-```
+每个节点的详细文档 (逻辑流程、输入/输出、关键假设、失败模式) 请参阅 `docs/nodes/`。
 
-#### Node 2: `financial_health_scan` (财务健康扫描)
+| # | 节点 | 职责 | State 输出 | 前端组件 | 详细文档 |
+|---|------|------|------------|----------|----------|
+| 1 | `fetch_sec_data` | SEC EDGAR 数据获取 + XBRL 归一化 | `financials` | MetricTable | [01-fetch-sec-data.md](docs/nodes/01-fetch-sec-data.md) |
+| 2 | `financial_health_scan` | 财务健康扫描 (ICR, D/E, 利润率, CAGR) | `health_metrics`, `health_assessment` | FinancialHealthCard, RevenueChart | [02-financial-health.md](docs/nodes/02-financial-health.md) |
+| 3 | `dynamic_dcf` | 两阶段 DCF 估值建模 | `dcf_result` | FCFChart, DCFResultCard, ValuationGauge, AssumptionSlider | [03-dcf-model.md](docs/nodes/03-dcf-model.md) |
+| 4 | `relative_valuation` | 相对估值 (当前乘数 + 历史百分位 + 同业对比) | `relative_valuation_result` | RelativeValuationCard | [04-relative-valuation.md](docs/nodes/04-relative-valuation.md) |
+| 5 | `event_sentiment` | 消息面情绪分析 (新闻 + 内部人 + LLM) | `event_sentiment_result` | SentimentCard | [05-event-sentiment.md](docs/nodes/05-event-sentiment.md) |
+| 6 | `event_impact` | 事件影响分析 + DCF 参数调整重算 | `event_impact_result` | EventImpactCard | [06-event-impact.md](docs/nodes/06-event-impact.md) |
+| 7 | `strategy` | 安全边际 & 买入策略 (MoS + P/E 分位数 + 情绪修正) | `strategy_result` | StrategyDashboard | [07-strategy.md](docs/nodes/07-strategy.md) |
+| 8 | `logic_trace` | 数据溯源 (14 指标 × 5 年 → SEC 原始链接) | `source_map`, `verdict` | SourceTable | [08-logic-trace.md](docs/nodes/08-logic-trace.md) |
 
+**节点间数据流**:
 ```
-financial_health_node(state, writer)
-    │
-    ├── 从 state["financials"] 读取已归一化的数据
-    │
-    ├── 计算利息覆盖率:
-    │   ├── operating_income[-1] = $130.4B
-    │   ├── interest_expense[-1] = $257M
-    │   └── ICR = 130,387 / 257 = 507.34x → "Strong"
-    │
-    ├── 计算债务/权益比:
-    │   ├── total_liabilities[-1] = $49.5B
-    │   ├── stockholders_equity[-1] = $157.3B
-    │   └── D/E = 49.5 / 157.3 = 0.31x → "Conservative"
-    │
-    ├── 计算利润率 (按年时间序列):
-    │   ├── gross_margin: (revenue - cost_of_revenue) / revenue × 100
-    │   │   └── 最新: 71.1%
-    │   ├── operating_margin: operating_income / revenue × 100
-    │   │   └── 最新: 60.4%
-    │   └── net_margin: net_income / revenue × 100
-    │       └── 最新: 55.6%
-    │
-    ├── 计算收入 CAGR:
-    │   ├── 3 年: (215.9B / 27.0B)^(1/3) - 1 = 100.1%
-    │   └── 5 年: (215.9B / 6.9B)^(1/5) - 1 = 66.9%
-    │
-    ├── 计算 ROE:
-    │   └── net_income / equity = 120.1B / 157.3B = 76.3%
-    │
-    ├── 综合评估: ICR > 5 且 D/E < 3 → "Strong"
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 4 (每个指标)
-    │   ├── ComponentEvent("financial_health_card", {assessment: "Strong", ...})
-    │   │   └── 前端挂载 FinancialHealthCard: 绿色"Strong"徽章 + 指标网格
-    │   ├── ComponentEvent("revenue_chart", {data: [{year, revenue} × 18]})
-    │   │   └── 前端挂载 RevenueChart: Recharts BarChart 18年营收
-    │   └── StepCompleteEvent
-    │
-    └── return {health_metrics, health_assessment: "Strong", reasoning_steps}
-```
-
-#### Node 3: `dynamic_dcf` (DCF 估值建模)
-
-```
-dcf_node(state, writer)
-    │
-    ├── 从 state["financials"].free_cash_flow 读取历史 FCF
-    │   └── [2021: $8.1B, 2022: $3.8B, 2023: $27.0B, 2024: $60.9B, 2025: $96.7B]
-    │
-    ├── 估算增长率:
-    │   ├── _fcf_cagr(fcf, 3) = (96.7/27.0)^(1/3) - 1 = 53.0% (3年)
-    │   ├── _fcf_cagr(fcf, 5) → 无法计算 (数据不足)
-    │   ├── raw_growth = 53.0% (仅有 3 年)
-    │   └── 封顶: min(53.0%, 30%) = 30.0%
-    │
-    ├── 估算 WACC:
-    │   ├── _estimate_wacc(debt=8.5B, equity=157.3B, interest=257M)
-    │   ├── cost_of_equity = 4.5% + 1.2 × 5.5% = 11.1%
-    │   ├── cost_of_debt = 257M / 8.5B = 3.0%
-    │   ├── WACC = (157.3/165.8)×11.1% + (8.5/165.8)×3.0%×(1-0.21)
-    │   └── = 10.66%
-    │
-    ├── terminal_growth = 3.0% (固定假设)
-    │
-    ├── compute_dcf(latest_fcf=96.7B, growth=30%, terminal=3%, discount=10.66%)
-    │   │
-    │   │  ┌─── 2 阶段 DCF 模型 ──────────────────────────────────────┐
-    │   │  │                                                            │
-    │   │  │  Phase 1 (Year 1-5): 恒定高增长 30.0%                    │
-    │   │  │    Y1: 96.7B × 1.30 = $125.7B                            │
-    │   │  │    Y2: 125.7B × 1.30 = $163.4B                           │
-    │   │  │    Y3: 163.4B × 1.30 = $212.4B                           │
-    │   │  │    Y4: 212.4B × 1.30 = $276.1B                           │
-    │   │  │    Y5: 276.1B × 1.30 = $359.0B                           │
-    │   │  │                                                            │
-    │   │  │  Phase 2 (Year 6-10): 线性衰减 30% → 3%                  │
-    │   │  │    Y6:  增长率 = 30% + (3%-30%) × 1/5 = 24.6%            │
-    │   │  │    Y7:  增长率 = 30% + (3%-30%) × 2/5 = 19.2%            │
-    │   │  │    Y8:  增长率 = 30% + (3%-30%) × 3/5 = 13.8%            │
-    │   │  │    Y9:  增长率 = 30% + (3%-30%) × 4/5 = 8.4%             │
-    │   │  │    Y10: 增长率 = 30% + (3%-30%) × 5/5 = 3.0%             │
-    │   │  │                                                            │
-    │   │  │  Terminal Value:                                           │
-    │   │  │    TV = Y10_FCF × (1+3%) / (10.66% - 3%) = $9.1T         │
-    │   │  │    PV(TV) = $9.1T / (1.1066)^10 = $3.3T                  │
-    │   │  │                                                            │
-    │   │  │  Enterprise Value = PV(FCF_sum) + PV(TV) = $5.4T          │
-    │   │  │  Intrinsic Value/Share = $5.4T / 24.5B shares = $220.36   │
-    │   │  └────────────────────────────────────────────────────────────┘
-    │   │
-    │   └── 返回 DCFResult
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 4
-    │   ├── ComponentEvent("fcf_chart", {data: historical(5) + projected(10)})
-    │   │   └── 前端: 深色柱 = 历史, 浅色柱 = 预测
-    │   ├── ComponentEvent("dcf_result_card", {intrinsic: $220.36, EV: $5.4T, ...})
-    │   ├── ComponentEvent("valuation_gauge", {intrinsic_value: 220.36})
-    │   ├── ComponentEvent("assumption_slider", {growth: 30, discount: 10.66, terminal: 3})
-    │   │   └── 前端: 三个滑块 + "Recalculate DCF" 按钮
-    │   └── StepCompleteEvent
-    │
-    └── return {dcf_result: {...}, reasoning_steps}
-```
-
-#### Node 4: `relative_valuation` (相对估值 — 市场乘数法)
-
-```
-relative_valuation_node(state, writer)
-    │
-    ├── 前置检查: financials 必须存在, 否则返回空结果
-    │
-    ├── 获取实时市场价格:
-    │   ├── market_data_client.get_current_price("NVDA")
-    │   │   └── GET /stable/quote?symbol=NVDA&apikey=KEY
-    │   │       └── 返回: [{"symbol":"NVDA","price":110.93,...}]
-    │   └── 失败 → 返回 {price_available: false}, 前端显示提示横幅
-    │
-    ├── 计算当前乘数 (_compute_current_multiples):
-    │   ├── Market Cap = price × diluted_shares
-    │   ├── Enterprise Value = market_cap + long_term_debt - cash
-    │   ├── P/E = price / EPS (EPS > 0)
-    │   ├── P/B = market_cap / equity (equity > 0)
-    │   ├── P/S = market_cap / revenue (revenue > 0)
-    │   ├── EV/Revenue, EV/EBIT, EV/FCF
-    │   └── PEG = P/E / (EPS CAGR% × 100) — 3年EPS复合增长率
-    │
-    ├── 计算历史百分位 (_compute_historical_multiples):
-    │   ├── get_annual_closing_prices("NVDA", years=10)
-    │   │   └── GET /stable/historical-price-eod/full?symbol=NVDA&from=...&apikey=KEY
-    │   ├── 对每年有 SEC 数据 + 价格数据的年份, 计算 P/E, P/B, P/S, EV/Rev, EV/EBIT
-    │   ├── 计算 median, average, count
-    │   └── percentile_rank(current, historical_series) → 当前值在历史中的百分位
-    │
-    ├── 同业对比 (_fetch_peer_data):
-    │   ├── get_peers("NVDA") → ["AMD","INTC","AVGO","QCOM",...]
-    │   │   └── GET /stable/stock-peers?symbol=NVDA&apikey=KEY
-    │   ├── get_batch_peer_metrics(peers)
-    │   │   └── 并发调用 get_peer_key_metrics_ttm() (asyncio.gather)
-    │   │       └── GET /stable/ratios-ttm?symbol=AMD&apikey=KEY
-    │   │           └── 提取: priceToEarningsRatioTTM, priceToBookRatioTTM, ...
-    │   ├── 计算同行中位数 (peRatio, pbRatio, ...)
-    │   └── delta% = (company_value - peer_median) / peer_median × 100
-    │
-    ├── 降级策略:
-    │   ├── 无 FMP Key → price_available=false, 跳过所有价格依赖计算
-    │   ├── 有 Key 但无同业 → peer_data_available=false, 隐藏同业表格
-    │   └── 完整数据 → 全部分析 (当前乘数 + 历史百分位 + 同业偏差)
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 5 (价格/乘数/历史/同业/偏差)
-    │   ├── ComponentEvent("relative_valuation_card", {
-    │   │       entity_name, ticker, price_available,
-    │   │       current_multiples: {pe, pb, ps, ev_to_revenue, ...},
-    │   │       historical_stats: {pe: {series, median, average}, ...},
-    │   │       percentiles: {pe: 70.0, ...},
-    │   │       peer_comparison: {peer_data_available, peers, peer_medians, deltas},
-    │   │   })
-    │   │   └── 前端挂载 RelativeValuationCard:
-    │   │       ├── A区: 当前乘数网格 (4×2) + 百分位指示器 + 同业偏差%
-    │   │       ├── B区: 历史百分位条形图 (颜色: <20绿, 20-50蓝, 50-80琥珀, >80红)
-    │   │       └── C区: 同业对比表 (目标公司行 + 同业行 + 中位数行)
-    │   └── StepCompleteEvent
-    │
-    └── return {relative_valuation_result: {...}, reasoning_steps}
-```
-
-#### Node 5: `event_sentiment` (消息面情绪分析)
-
-```
-event_sentiment_node(state, writer)
-    │
-    ├── 前置检查: financials 必须存在, AQ_FINNHUB_API_KEY 必须设置
-    │   └── 缺失则跳过: 发射 StepCompleteEvent, return None
-    │
-    ├── 获取公司新闻:
-    │   ├── finnhub_client.get_company_news("NVDA", days=30)
-    │   │   └── 分7天批次并发获取 GET /company-news (semaphore=3)
-    │   │       └── 返回: [{headline, summary, source, datetime, url}, ...]
-    │   │       └── 按 id 去重, 按 datetime DESC 排序
-    │   └── 相关度过滤 (event_sentiment_math.py):
-    │       ├── 评分: 4(标题含ticker/公司名) 3(summary+related) 2(唯一related) 0(排除)
-    │       ├── TICKER_ALIASES 公司名匹配 (NVDA→"nvidia", AAPL→"apple" 等 40+)
-    │       ├── 双排序: 相关度 DESC, 日期 DESC, 最多保留 30 篇
-    │       └── 权威来源白名单过滤 (Reuters/Bloomberg/WSJ/FT 等 20+)
-    │
-    ├── 获取 SEC 8-K 文件:
-    │   ├── sec_client.get_recent_8k_filings(cik, days=30)
-    │   │   └── EDGAR full-text search → 8-K filings → 转为 article 格式
-    │   └── 预置到文章列表 (SEC 文件始终视为权威)
-    │
-    ├── 尝试 Finnhub Premium 情绪数据:
-    │   ├── finnhub_client.get_news_sentiment("NVDA")
-    │   │   └── GET /news-sentiment?symbol=NVDA&token=KEY
-    │   │       └── Free plan → HTTP 403 → 返回 None
-    │   └── Premium 不可用时, 使用 LLM 降级分析
-    │
-    ├── LLM 新闻情绪分析 (DeepSeek, OpenAI 兼容 API):
-    │   ├── llm_sentiment.analyze_news_sentiment("NVDA", articles[:20])
-    │   │   └── POST {AQ_LLM_BASE_URL}/chat/completions
-    │   │       └── System prompt 要求返回结构化 JSON:
-    │   │           {articles: [{sentiment, event_type, confidence}],
-    │   │            overall_score: float, summary: str, key_events: [str]}
-    │   ├── 使用 XML 标签 <articles> 包裹新闻内容 (防止 prompt injection)
-    │   └── _validate_llm_response() 校验返回值 (不修改原 dict): 限制 overall_score ∈ [-1, 1],
-    │       confidence ∈ [0, 1], key_events ≤ 5 条
-    │
-    ├── 获取内部人情绪:
-    │   └── finnhub_client.get_insider_sentiment("NVDA", months=3)
-    │       └── GET /stock/insider-sentiment?symbol=NVDA&from=...&to=...&token=KEY
-    │           └── 提取 MSPR (Monthly Share Purchase Ratio) 和 net change
-    │
-    ├── 综合情绪评分 (event_sentiment_math.py):
-    │   ├── compute_overall_sentiment(news_score, insider_score, ...)
-    │   │   └── 权重: 60% 新闻 + 40% 内部人 (两者都有时)
-    │   │       └── 只有新闻 → 100% 新闻; 只有内部人 → 100% 内部人
-    │   ├── _sentiment_label(score) → "Very Bearish"/"Bearish"/"Neutral"/"Bullish"/"Very Bullish"
-    │   └── compute_sentiment_adjustment(overall):
-    │       ├── score < -0.5 → delta = -8% (提高买入门槛)
-    │       ├── score < -0.2 → delta = -4%
-    │       ├── score > 0.5 → delta = +5% (降低买入门槛)
-    │       ├── score > 0.2 → delta = +3%
-    │       └── else → delta = 0%
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 5 (新闻获取/LLM分析/内部人/综合评分)
-    │   ├── ComponentEvent("sentiment_card", {
-    │   │       ticker, overall_sentiment, sentiment_label,
-    │   │       news_score, insider_score, insider_mspr, insider_net_change,
-    │   │       sentiment_adjustment: {margin_of_safety_pct_delta, reasoning},
-    │   │       articles: [{headline, sentiment, event_type, confidence, ...}],
-    │   │       llm_summary, key_events,
-    │   │   })
-    │   │   └── 前端挂载 SentimentCard:
-    │   │       ├── A区: 半圆仪表盘 (bearish红 → neutral黄 → bullish绿)
-    │   │       ├── B区: 新闻细分 (看多/中性/看空分布条 + 关键事件 + 文章列表)
-    │   │       └── C区: 内部人情绪 (MSPR 进度条 + 净变动)
-    │   └── StepCompleteEvent
-    │
-    └── return {event_sentiment_result: {...}, reasoning_steps}
-```
-
-#### Node 5b: `event_impact` (事件影响分析 + DCF 重算)
-
-```
-event_impact_node(state, writer)
-    │
-    ├── 前置检查: financials, event_sentiment_result.articles, dcf_result 必须存在
-    │   ├── LLM API key 未设置 → 跳过 (优雅降级)
-    │   └── 缺失任一 → 发射 StepCompleteEvent, return None
-    │
-    ├── 提取原始 DCF 假设:
-    │   └── {growth_rate, terminal_growth_rate, discount_rate, latest_fcf}
-    │
-    ├── LLM Call 1 — 筛选有影响的新闻:
-    │   ├── 输入: event_sentiment_result.articles (已过滤的权威来源文章)
-    │   ├── Prompt 要求排除: 常规分析师评级、泛市场评论、已定价业绩报告
-    │   └── 输出: {"impactful_indices": [0, 3, 5], "reasoning": "..."}
-    │       └── 无影响文章 → return None ("no material events found")
-    │
-    ├── LLM Call 2 — 参数影响分析:
-    │   ├── 输入: 筛选后文章 + 当前 DCF 假设
-    │   ├── 可调参数: growth_rate, terminal_growth_rate, discount_rate,
-    │   │             risk_adjustment→WACC, revenue_adjustment→增长, margin_adjustment→增长*0.5,
-    │   │             fcf_one_time_adjust→FCF
-    │   ├── 保守原则: 仅建议高置信度调整
-    │   └── 输出: {adjustments: {param: {type, value, reasoning}|null, ...},
-    │              summary, confidence}
-    │
-    ├── 应用参数调整 (event_impact_math.py):
-    │   ├── apply_all_adjustments(original, adjustments)
-    │   │   ├── delta → 累加; multiplier → 相乘; absolute → 替换
-    │   │   └── 最终 clamp 到 PARAMETER_REGISTRY 中的 min/max
-    │   └── recalculate_dcf(adjusted, shares_outstanding)
-    │       └── 直接调用 dcf_model.compute_dcf() 重算
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 3 (筛选/分析/重算)
-    │   ├── ComponentEvent("event_impact_card", {
-    │   │       ticker, original_assumptions, parameter_adjustments,
-    │   │       adjusted_assumptions, recalculated_dcf,
-    │   │       impactful_articles: [{headline, source, url, date, ...}],
-    │   │       summary, confidence,
-    │   │   })
-    │   │   └── 前端挂载 EventImpactCard:
-    │   │       ├── 摘要 + 置信度指示器
-    │   │       ├── 参数对比表 (Original → Adjusted + delta)
-    │   │       ├── 重算内在价值 (新 DCF 结果)
-    │   │       └── 触发事件列表 (可点击链接 + 日期)
-    │   └── StepCompleteEvent
-    │
-    └── return {event_impact_result: {...}, reasoning_steps}
-```
-
-#### Node 6: `strategy` (安全边际 & 买入策略)
-
-```
-strategy_node(state, writer)
-    │
-    ├── 前置检查: financials 和 dcf_result.intrinsic_value_per_share 必须存在
-    │   └── 缺失则跳过: 发射 StepCompleteEvent("Strategy skipped"), return None
-    │
-    ├── 决定使用哪个内在价值:
-    │   ├── 优先使用 event_impact_result.recalculated_dcf.intrinsic_value_per_share (如存在)
-    │   └── 否则回退到原始 dcf_result.intrinsic_value_per_share
-    │
-    ├── 获取实时市场价格:
-    │   ├── market_data_client.get_current_price("NVDA")
-    │   │   └── GET /stable/quote?symbol=NVDA&apikey=KEY
-    │   │       └── 返回: [{"symbol":"NVDA","price":110.93,...}]
-    │   └── current_price = $110.93
-    │       └── 失败或 ≤ 0 则跳过 (优雅降级, 不阻塞后续节点)
-    │
-    ├── 计算安全边际 (Margin of Safety):
-    │   ├── mos_pct = (intrinsic - current_price) / intrinsic × 100
-    │   │   └── ($220.36 - $110.93) / $220.36 × 100 = 49.7%
-    │   ├── suggested_entry = intrinsic × 0.85 = $187.31 (15% 安全边际)
-    │   ├── upside_pct = (intrinsic - current_price) / current_price × 100
-    │   │   └── ($220.36 - $110.93) / $110.93 × 100 = 98.7%
-    │   └── signal = _determine_signal(mos_pct):
-    │       ├── > 25%  → "Deep Value"    ← 此例 49.7%
-    │       ├── > 10%  → "Undervalued"
-    │       ├── > -10% → "Fair Value"
-    │       └── else   → "Overvalued"
-    │
-    ├── 计算 P/E 历史分位数:
-    │   ├── market_data_client.get_annual_closing_prices("NVDA", years=10)
-    │   │   └── GET /stable/historical-price-eod/full?symbol=NVDA&from=2016-04-14&apikey=KEY
-    │   │       └── 返回每年最后交易日收盘价 (使用原始 close, 非 adjClose)
-    │   │
-    │   ├── 交叉匹配: 年终股价 × SEC diluted_eps → 每年 P/E
-    │   │   ├── 使用 raw close + raw EPS → P/E 对股票拆分不变 (P/E invariant)
-    │   │   └── 只计算 EPS > 0 的年份 (亏损年跳过)
-    │   │
-    │   ├── current_pe = current_price / latest_eps
-    │   │   └── $110.93 / $4.90 = 22.6x
-    │   │
-    │   └── pe_percentile = rank(current_pe) / count × 100
-    │       └── 当前 P/E 在过去 N 年中所处位置 (需 ≥ 3 年数据)
-    │
-    ├── 相对估值交叉校验:
-    │   ├── 读取 relative_valuation_result (从参数传入)
-    │   ├── 若同业 P/E 偏差 < -20%: "P/E显著低于同行, 支持低估判断"
-    │   ├── 若同业 P/E 偏差 > +20%: "P/E显著高于同行, 估值溢价需谨慎"
-    │   └── 否则: "P/E大致与同行一致"
-    │
-    ├── 情绪修正 (来自 event_sentiment 节点):
-    │   ├── 读取 event_sentiment_result (从参数传入)
-    │   ├── 提取 sentiment_adjustment.margin_of_safety_pct_delta
-    │   ├── delta != 0 时: 调整安全边际 = mos_pct + delta
-    │   └── 推理链追加: "Sentiment adjustment: {reasoning} (Δ{delta}%)"
-    │
-    │  注: 两层调整分离 — event_impact 建模基本面影响 (DCF参数调整),
-    │      sentiment 调整捕捉市场情绪 (粗粒度 MoS 修正), 两者叠加
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 5 (价格/MoS/信号/P/E)
-    │   ├── ComponentEvent("strategy_dashboard", {
-    │   │       entity_name, ticker, current_price, intrinsic_value,
-    │   │       margin_of_safety_pct, suggested_entry_price, upside_pct,
-    │   │       signal, current_pe, pe_percentile, historical_pe,
-    │   │       sentiment_delta, sentiment_note,
-    │   │   })
-    │   │   └── 前端挂载 StrategyDashboard: 估值热力仪表盘
-    │   │       ├── Signal 徽章 (绿/黄/红)
-    │   │       ├── 三列价格对比: 市价 | 内在价值 | 建议买入价
-    │   │       ├── 估值温度计 (CSS 渐变 red→amber→green + 标记线)
-    │   │       ├── 安全边际% + 上行/下行空间%
-    │   │       ├── P/E 分位数进度条 (历史百分位)
-    │   │       └── 买入策略文字建议
-    │   └── StepCompleteEvent
-    │
-    └── return {strategy_result: {...}, reasoning_steps}
-```
-
-#### Node 7: `logic_trace` (数据溯源)
-
-```
-logic_trace_node(state, writer)
-    │
-    ├── 遍历 14 个财务指标字段, 取每个字段最近 5 年的数据
-    │   └── 对每条记录构建:
-    │       {
-    │           metric: "Revenue",
-    │           calendar_year: 2025,
-    │           value: 215938000000,
-    │           form: "10-K",
-    │           filed: "2026-02-25",
-    │           accession: "0001045810-26-000021",
-    │           url: "https://www.sec.gov/Archives/edgar/data/1045810/..."
-    │       }
-    │
-    ├── 共计 70 个数据点, 覆盖 14 个指标
-    │
-    ├── 构建最终 verdict:
-    │   └── "NVIDIA CORP (NVDA): Financial health is Strong.
-    │        DCF intrinsic value: $220.36/share.
-    │        Event sentiment: Bullish (score: 0.45).
-    │        Market multiples: P/E 22.6x, P/B 65.1x, P/S 28.4x.
-    │        All 70 data points traced to SEC EDGAR filings."
-    │
-    ├── writer 发射事件:
-    │   ├── AgentThinkingEvent × 2
-    │   ├── ComponentEvent("source_table", {sources: [70 entries]})
-    │   │   └── 前端: 每行显示指标名/值/年份, 可点击跳转 SEC 原始文件
-    │   ├── StepCompleteEvent
-    │   └── AnalysisCompleteEvent(verdict, ticker)
-    │       └── 前端: useSSE 检测到此事件 → status = "complete" → 关闭 EventSource
-    │
-    └── return {source_map, verdict, reasoning_steps}
+fetch_sec_data ──financials──> financial_health ──(隐式)──> dynamic_dcf
+                                                              │
+                              relative_valuation <──financials──┘
+                                      │
+                              event_sentiment <──financials──┘
+                                      │
+                              event_impact <──sentiment + dcf──┘
+                                      │
+                              strategy <──dcf + rel_val + sentiment + impact──┘
+                                      │
+                              logic_trace <──all results──┘
 ```
 
 ### Phase 4: Frontend Rendering (全程实时)
@@ -798,7 +383,7 @@ logic_trace_node(state, writer)
 ```
 SSE 事件流时序 (共约 25 个事件):
     │
-    │  ┌─ AgentTerminal (左栏 2/5) ──────────┐  ┌─ Visualizer (右栏 3/5) ────────────┐
+    │  ┌─ ConversationPanel (左栏 2/5) ──────┐  ┌─ AnalysisCanvas (右栏 3/5) ─────────┐
     │  │                                       │  │                                     │
   1 │  │ [SEC Fetch] Fetching SEC EDGAR...     │  │                                     │
   2 │  │ [SEC Fetch] Successfully loaded...    │  │ ┌─ MetricTable ──────────────────┐  │
@@ -888,7 +473,7 @@ SSE 事件流时序 (共约 25 个事件):
     │
     ├── assumption-slider.tsx: onClick "Recalculate DCF"
     │
-    ├── analysis-layout.tsx: handleRecalculate({
+    ├── app-shell.tsx: handleRecalculate({
     │       ticker: "NVDA",
     │       growth_rate: 15.0,
     │       terminal_growth_rate: 3.0,
@@ -915,7 +500,7 @@ SSE 事件流时序 (共约 25 个事件):
     │   │
     │   └── ← 200 OK (同步响应, 毫秒级)
     │
-    └── analysis-layout.tsx: setUpdatedComponents(...)
+    └── app-shell.tsx: setUpdatedComponents(...)
         ├── 更新 dcf_result_card: 新内在价值
         ├── 更新 valuation_gauge: 新仪表数值
         ├── 更新 fcf_chart: 新预测柱状图
@@ -999,12 +584,12 @@ useSSE (解析 JSON, 分类事件)
     ↓
 useAnalysisStream (拆分为 thinkingMessages / components / verdict)
     ↓
-AnalysisLayout
-    ├── AgentTerminal ← thinkingMessages[]
-    │   └── TypewriterText (逐字显示, 15ms/字, requestAnimationFrame)
-    │       └── node 颜色标签: 蓝(SEC) 绿(Health) 黄(DCF) 玫红(Strategy) 紫(Trace)
+AppShell
+    ├── ConversationPanel ← thinkingMessages[]
+    │   └── ReasoningAccordion (可折叠推理段落, 打字机效果)
+    │       └── node 标签: 按 node 名称分组显示
     │
-    └── Visualizer ← components[]
+    └── AnalysisCanvas ← components[]
         └── 遍历 ComponentInstruction[]
             └── getComponent(type) → lazy React component
                 └── <Component {...props} /> 渲染
@@ -1014,141 +599,47 @@ AnalysisLayout
 
 ## 5. Key Data Models
 
-### 5.1 SEC Raw Response (`models/sec.py`)
+> **真相源**: 以下数据结构的权威定义在代码中。文档是对代码的可读摘要，如有冲突以代码为准。
 
-```
-SECCompanyFacts
-├── cik: int                          # 1045810
-├── entityName: str                   # "NVIDIA CORP"
-└── facts: {namespace → {tag → SECFact}}
-    └── "us-gaap"
-        └── "Revenues" → SECFact
-            ├── label: str | None
-            ├── description: str | None
-            └── units: SECFactUnits
-                ├── USD: [SECFactEntry, ...]
-                ├── USD/shares: [SECFactEntry, ...]  (EPS 等)
-                └── shares: [SECFactEntry, ...]       (股数等)
+| 模型 | 代码位置 | 说明 |
+|------|----------|------|
+| `SECCompanyFacts` | `backend/models/sec.py` | SEC EDGAR 原始响应 (XBRL) |
+| `CompanyFinancials` | `backend/models/financial.py` | 16 个归一化财务指标时间序列 |
+| `AnalysisState` | `backend/models/agent_state.py` | LangGraph 共享状态 (TypedDict) |
+| `SSEEvent` | `backend/models/events.py` | 5 种 SSE 事件类型 (Pydantic) |
 
-SECFactEntry
-├── start: str | None     # "2024-01-29" (期间起始, 可选)
-├── end: str              # "2025-01-26" (期间结束)
-├── val: float            # 215938000000
-├── accn: str             # "0001045810-26-000021" (SEC 入档号)
-├── fy: int               # 2026 (财务年度)
-├── fp: str               # "FY" (全年)
-├── form: str             # "10-K" (年报)
-├── filed: str            # "2026-02-25"
-└── frame: str | None     # "CY2025" 或 "CY2024Q4I" (去重键)
-```
-
-### 5.2 Normalized Financial Data (`models/financial.py`)
-
-```
-CompanyFinancials
-├── cik, ticker, entity_name
-└── 15 个 list[AnnualMetric] 字段:
-    ├── revenue              ← TAG_MAP["revenue"] (5 个候选标签)
-    ├── net_income           ← NetIncomeLoss
-    ├── operating_income     ← OperatingIncomeLoss
-    ├── total_assets         ← Assets (instant frame CYxxxxQ4I)
-    ├── total_liabilities    ← Liabilities (instant frame)
-    ├── stockholders_equity  ← StockholdersEquity (instant frame)
-    ├── operating_cash_flow  ← NetCashProvidedByUsedInOperatingActivities
-    ├── capital_expenditure  ← PaymentsToAcquire... (2 个候选)
-    ├── free_cash_flow       ← 计算值: OCF - |CapEx|
-    ├── interest_expense     ← InterestExpense
-    ├── long_term_debt       ← LongTermDebt (instant frame)
-    ├── cash_and_equivalents ← CashAndCashEquivalents... (instant frame)
-    ├── diluted_eps          ← EarningsPerShareDiluted (单位: USD/shares)
-    ├── diluted_shares       ← WeightedAverage... (单位: shares)
-    └── cost_of_revenue      ← CostOfRevenue (3 个候选)
-
-AnnualMetric
-├── calendar_year: int     # 2025
-├── value: float           # 215938000000.0
-├── fiscal_year: int       # 2026 (NVIDIA 财年1月结束)
-├── filing_date: str       # "2026-02-25"
-├── sec_accession: str     # "0001045810-26-000021"
-└── form: str              # "10-K"
-```
-
-### 5.3 LangGraph State (`models/agent_state.py`)
+### AnalysisState 概览
 
 ```
 AnalysisState (TypedDict)
-├── ticker: str                         # "NVDA" (输入, 不可变)
-├── financials: CompanyFinancials|None   # Node 1 填充
-├── fetch_errors: list[str]             # Node 1 填充 (如果失败)
-├── health_metrics: dict | None         # Node 2 填充
-├── health_assessment: str | None       # Node 2 填充 ("Strong")
-├── dcf_result: dict | None             # Node 3 填充
-├── relative_valuation_result: dict|None # Node 4 填充 (市场乘数+百分位+同业)
-├── event_sentiment_result: dict|None   # Node 5 填充 (消息面情绪+内部人+MoS修正)
-├── event_impact_result: dict|None      # Node 5b 填充 (事件影响+参数调整+DCF重算)
-├── strategy_result: dict | None        # Node 6 填充 (安全边际/P/E/信号+情绪修正)
-├── source_map: dict | None             # Node 7 填充
-├── reasoning_steps: list[str]          # 所有节点追加 (Annotated[list, add])
-└── verdict: str | None                 # Node 7 填充
+├── ticker: str                         # 输入
+├── financials: CompanyFinancials|None   # Node 1
+├── fetch_errors: list[str]             # Node 1
+├── health_metrics: dict | None         # Node 2
+├── health_assessment: str | None       # Node 2
+├── dcf_result: dict | None             # Node 3
+├── relative_valuation_result: dict|None # Node 4
+├── event_sentiment_result: dict|None   # Node 5
+├── event_impact_result: dict|None      # Node 6
+├── strategy_result: dict | None        # Node 7
+├── source_map: dict | None             # Node 8
+├── reasoning_steps: list[str]          # 追加模式
+└── verdict: str | None                 # Node 8
 ```
 
 ---
 
 ## 6. Critical Design Decisions
 
-### 6.1 XBRL Tag Fallback with Best-Match Selection
+关键架构决策的详细分析（背景、选项、决策、后果）请参阅 `docs/decisions/`：
 
-**问题**: 不同公司使用不同的 XBRL 标签表达同一财务概念。NVIDIA 的 CapEx 在早期用 `PaymentsToAcquirePropertyPlantAndEquipment`, 近年改用 `PaymentsToAcquireProductiveAssets`。
-
-**解决**: `_extract_annual_metrics` 遍历所有候选标签, 选择 `latest_year` 最大的 (而非第一个匹配)。这避免了旧标签只有历史数据而遮蔽新标签的问题。
-
-### 6.2 Frame-Based Deduplication
-
-**问题**: SEC API 对同一数据点返回多个条目 (原始报告 + 后续重述)。
-
-**解决**: 只保留有 `frame` 字段的条目。frame 是 SEC 的规范去重键:
-- `CY2024` = 日历年 2024 的全年 duration 值 (收入/利润等)
-- `CY2024Q4I` = 日历年 2024 Q4 的 instant 值 (资产/负债等)
-- `CY2024Q4` = 季度 period 值 → 过滤掉 (正则 `Q\d$`)
-
-### 6.3 StreamWriter vs astream_events
-
-**选择 StreamWriter**: LangGraph 的 `astream_events` 会产生大量内部回调事件, 难以过滤。`StreamWriter` 允许每个节点精确控制发射什么事件, 直接映射到 Generative UI 协议。
-
-### 6.4 Separate Recalculation Endpoint
-
-**问题**: 用户调整 DCF 参数后, 如果重新走 SSE 流, 需要重新调用 SEC API 和重跑所有节点。
-
-**解决**: `POST /api/recalculate-dcf` 从内存缓存读取 `CompanyFinancials` (30分钟 TTL), 只重算 `compute_dcf()`, 毫秒级返回。前端局部更新 3 个组件 (dcf_result_card, valuation_gauge, fcf_chart)。
-
-### 6.5 FMP /stable/ API 作为市场数据源 & 优雅降级
-
-**问题**: DCF 计算的内在价值需要与实时市场价格对比, 才能给出买入建议。但项目原本只有 SEC EDGAR 基本面数据, 没有股价来源。
-
-**选型**: Financial Modeling Prep (FMP) API, 通过现有 `httpx` 调用, 零新增依赖。
-- FMP 于 2025年8月废弃了 `/api/v3/` 和 `/api/v4/` 端点, 现在使用 `/stable/` 端点
-- 对比 `yfinance`: 会引入 pandas/numpy 重型依赖, 且为同步库, 与项目全 async 架构冲突
-- 对比 Yahoo Finance 直连: 无官方 API, 端点频繁变更, 不稳定
-
-**端点映射 (v3/v4 → stable)**:
-
-| 功能 | 旧端点 (已废弃) | 新端点 (当前) |
-|------|------------------|---------------|
-| 实时报价 | `/api/v3/quote-short/{ticker}` | `/stable/quote?symbol=` |
-| 历史行情 | `/api/v3/historical-price-full/{ticker}` | `/stable/historical-price-eod/full?symbol=` |
-| 同业公司 | `/api/v4/stock_peers?symbol=` | `/stable/stock-peers?symbol=` |
-| TTM 指标 | `/api/v3/key-metrics-ttm/{ticker}` | `/stable/ratios-ttm?symbol=` |
-
-**降级策略**: `relative_valuation` 和 `strategy` 节点均设计为可选, 不阻塞主分析流程:
-- API Key 未设置 (`AQ_FMP_API_KEY=""`) → `get_current_price()` 返回 None → `relative_valuation` 返回 `price_available=false`, `strategy` 跳过
-- FMP 超时/错误 → 内部 try/except 捕获, 返回 None → 同上
-- 有 Key 但无同业 → `peer_data_available=false`, 前端隐藏同业表格
-- 节点 `ErrorEvent(recoverable=True)` → SSE 连接不关闭, 后续 `logic_trace` 正常执行
-- 最终效果: 用户正常看到 DCF 估值, 只是没有相对估值卡片和策略仪表盘
-
-### 6.6 Lazy Component Registry
-
-**原因**: Recharts 是重型图表库。10 个分析组件全部 `React.lazy()` 加载, 初始页面 bundle 不包含图表代码。组件按 SSE 事件到达顺序按需加载。
+| ADR | 决策 | 核心权衡 |
+|-----|------|----------|
+| [001](docs/decisions/001-xbrl-tag-fallback.md) | XBRL 标签回退: 选 latest_year 最大的 | 适应性 vs 口径差异风险 |
+| [002](docs/decisions/002-two-stage-dcf.md) | 两阶段 DCF (非三阶段) | 简洁性 vs 参数精度 |
+| [003](docs/decisions/003-stream-writer-over-astream.md) | StreamWriter (非 astream_events) | 事件可控性 vs token 级实时性 |
+| [004](docs/decisions/004-separate-recalc-endpoint.md) | 独立重算端点 (非重跑全图) | 响应速度 vs 数据新鲜度 |
+| [005](docs/decisions/005-fmp-stable-api.md) | FMP /stable/ API (非 yfinance) | 官方支持 vs 社区生态 |
 
 ---
 
@@ -1246,32 +737,15 @@ Response:
 
 ## 8. Error Handling
 
-```
-错误场景                     处理方式                              前端表现
-─────────────────────────────────────────────────────────────────────────
-Ticker 不存在               ErrorEvent(recoverable=False)        红色错误条
-SEC API 超时/5xx            ErrorEvent(recoverable=False)        红色错误条
-SEC API 429 (限速)          sec_client._rate_limit() 自动等待    用户无感
-XBRL 标签不存在              字段返回空列表, 节点继续执行          指标显示 "N/A"
-FCF 数据不足                 dcf_node 返回 None, 跳过图表         无 DCF 卡片
-利息/负债数据缺失            WACC 回退到全权益模型                 正常显示
-FMP API Key 未设置           relative_valuation: price_available  显示"数据不可用"横幅
-                             =false; strategy 节点跳过            无策略仪表盘
-FMP API 超时/5xx            get_current_price 返回 None          同上
-FMP 返回未知 ticker          响应为空列表, 返回 None              同上
-FMP 无同业数据               peer_data_available=false            隐藏同业表格
-Finnhub API Key 未设置       event_sentiment 节点跳过, 不阻塞      无情绪卡片
-Finnhub Free plan            news-sentiment 返回 403, 使用 LLM    用户无感
-DeepSeek/LLM 不可用          LLM 返回 None, 使用关键词分类         情绪仅基于内部人
-Finnhub 无新闻数据           articles 为空, news_score 为 None     仅内部人情绪
-Finnhub 无内部人数据          insider_data 为 None                  仅新闻情绪
-event_impact 无前提数据       节点跳过, strategy 用原始 DCF         无事件影响卡片
-event_impact LLM 不可用       节点跳过, 不阻塞 strategy             无事件影响卡片
-event_impact 无重大事件       return None ("no material events")    无事件影响卡片
-EPS 为负 (亏损公司)          P/E 分位数跳过, 仅显示安全边际       无 P/E 区域
-strategy 节点异常            ErrorEvent(recoverable=True)         无策略仪表盘, 分析继续
-重算时缓存过期 (30min)       HTTP 404 + 错误提示                  需要重新分析
-```
+核心原则：**优雅降级**。除 `fetch_sec_data` 失败（Ticker 不存在/SEC API 不可用）会终止分析外，所有其他节点的失败都不阻塞后续流程。
+
+详细错误处理表见各节点文档 (`docs/nodes/`) 的"失败模式与降级"章节。
+
+关键降级路径：
+- 无 `AQ_FMP_API_KEY` → relative_valuation (price_available=false) + strategy 跳过
+- 无 `AQ_FINNHUB_API_KEY` → event_sentiment + event_impact 跳过
+- 无 `AQ_LLM_API_KEY` → event_impact 跳过, LLM 情绪降级为关键词分析
+- 节点异常 → `ErrorEvent(recoverable=True)` → logic_trace 仍执行
 
 ---
 
