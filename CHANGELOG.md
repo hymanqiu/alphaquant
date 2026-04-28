@@ -6,7 +6,8 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
-| v0.7.1 | 2026-04-26 | docs | **文档体系重构（@Skyward666）**：ARCHITECTURE.md 拆分为三层文档体系（系统全景 + `docs/nodes/` 节点详情 + `docs/decisions/` 架构决策记录）。8 个核心节点文档全面重写（含 I/O 结构体定义 + NVDA 示例 + 失败模式）；5 个 ADR 记录关键架构决策。__注：本次新增的 v0.5/0.6/0.7 节点（qualitative_analysis / risk_yoy_diff / moat_analysis / investment_thesis）的 docs/nodes/ 文档将在 follow-up PR 中补齐__ |
+| v0.7.2 | 2026-04-28 | feat | **Admin 运行时切换 LLM provider**：`PATCH /api/admin/settings` 现支持 `llm_api_key` / `llm_base_url` / `llm_model` / `llm_narrative_*` 6 个字段。改动后 LLMClient singleton 自动失效，下次请求重建（不重启）。GET/PATCH/reset 响应中 api_key 自动 redacted（`***last4` 格式）。bad URL 拒绝在 PATCH 阶段，避免后续请求才发现 |
+| v0.7.1 | 2026-04-26 | docs | **文档体系重构（@Skyward666 + follow-up）**：ARCHITECTURE.md 拆分为三层文档体系（系统全景 + `docs/nodes/` 节点详情 + `docs/decisions/` 架构决策记录）。__PR #3__ 引入结构 + 8 个 v0.4 节点文档 + 5 个 ADR。__PR #6__ 跟进补齐 v0.5/0.6/0.7 内容：4 个 Pro 节点文档（09-12）+ 4 个 ADR（006-009）；ARCHITECTURE.md §11-14 缩为 §10 概览（-320 行）|
 | v0.7.0 | 2026-04-25 | feat | **认证 + 订阅分级（Phase 2）**：邮箱/密码 + Magic Link + Google OAuth 三种登录方式；PostgreSQL 持久化；JWT 会话；4 个 Pro 节点按 user.tier 门控（free 用户看到锁定预览卡）；admin 可手动升级用户为 Pro。新增 `services/auth/` 模块、Alembic 迁移、AuthProvider Context、登录/注册页 |
 | v0.6.0 | 2026-04-25 | feat | **5 个 LLM Pro 节点（Phase 3）**：投资论点生成器、10-K MD&A 定性分析、10-K Risk Factors 抽取、10-K YoY 风险变化对比、Hamilton Helmer 7 Powers 护城河评分。统一逐字引文核验防幻觉；分析管线从 8 节点扩至 12 节点 |
 | v0.5.0 | 2026-04-24 | feat | **LLM 基础设施 + 成本围栏（Phase 1）**：统一 LLMClient + Prompt YAML 库 + Provider 抽象 + Token 计费；BudgetGate（全局/per-IP 双闸熔断）+ IP 限流 + RuntimeSettings（admin 可热改阈值）+ `/api/admin/*` 接口（usage / settings / settings/reset） |
@@ -14,6 +15,75 @@
 | v0.3.0 | 2026-04-21 | feat | 消息面情绪修正：Finnhub 新闻 + 内部人情绪 → 综合评分 → 安全边际调整。新增 Finnhub 客户端、DeepSeek LLM 情绪分析、sentiment_card 组件 |
 | v0.2.0 | 2026-04-17 | feat | 相对估值（市场乘数法）：当前乘数 + 历史百分位 + 同业对比。新增 FMP API 客户端、relative_valuation_card 组件 |
 | v0.1.0 | 2026-04-17 | — | 初始版本：SEC EDGAR 数据获取、财务健康扫描、DCF 估值建模、买入策略、数据溯源、SSE + Generative UI |
+
+---
+
+## v0.7.2 — Admin 运行时切换 LLM provider
+
+**日期：** 2026-04-28
+
+### 概要
+
+把 LLM 的 provider / model / api_key 从「启动期 env 固定」升级为「admin 运行时可改」。
+admin `PATCH /api/admin/settings` 改完之后下次请求自动用新配置；不需重启进程；
+不影响 in-flight 请求；不重置 token 计费历史。
+
+### 用法
+
+```bash
+# 切到 OpenAI
+curl -X PATCH \
+  -H "Authorization: Bearer $AQ_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "llm_api_key": "sk-openai-xxx",
+    "llm_base_url": "https://api.openai.com/v1",
+    "llm_model": "gpt-4o-mini"
+  }' \
+  http://localhost:8000/api/admin/settings
+
+# 一键回 .env 默认
+curl -X POST -H "Authorization: Bearer $AQ_ADMIN_TOKEN" \
+  http://localhost:8000/api/admin/settings/reset
+
+# 单独切 thesis（task_tag）走高端模型，其它仍走 DeepSeek
+curl -X PATCH ... -d '{
+  "llm_narrative_api_key": "sk-openai-xxx",
+  "llm_narrative_base_url": "https://api.openai.com/v1",
+  "llm_narrative_model": "gpt-4o"
+}'
+```
+
+### 变更文件
+
+| 文件 | 变更 |
+|------|------|
+| `backend/services/runtime_settings.py` | `EffectiveSettings` 加 6 个 LLM 字段；`as_dict(redact=True)` 把 api_key 改成 `***last4`；新增 `redact_overrides`、`has_llm_overrides`、`LLM_PROVIDER_FIELDS` / `REDACTED_FIELDS` 常量；`_coerce` 验证 https URL |
+| `backend/services/llm/client.py` | 新增 `_effective_llm_config()`（override 优先，env fallback）+ `invalidate_llm_client()`；`_build_client` / `is_llm_configured` 改读 runtime |
+| `backend/services/llm/__init__.py` | 公开 `invalidate_llm_client` |
+| `backend/api/admin.py` | `SettingsPatch` 加 6 个字段；`patch_settings` 在 LLM 字段动了时调 `invalidate_llm_client`，applied echo 自动 redact 秘钥；`reset_settings` 同样在有 LLM override 时 invalidate；GET 响应过 `redact_overrides` |
+
+### 安全设计
+
+- secret 字段（`llm_api_key` / `llm_narrative_api_key`）在所有 admin 响应里都 redacted（`***last4` 或 `***`），秘钥**只能写不能读**
+- bad URL（非 https / 非 localhost）在 PATCH 阶段被 400 拒绝，避免后续 LLM 调用才发现
+- empty string PATCH = "remove override, fall back to env"（不是"清空配置"）
+- 紧急停 LLM 的正确方式：`PATCH llm_daily_budget_usd=0`（BudgetGate 立即拦截，所有节点降级），不是改 api_key
+
+### 已知限制
+
+- 多 worker 部署（`uvicorn --workers N`）下，admin PATCH 只影响接收该 PATCH 的 worker；其余 worker 仍用旧配置直到下次重启或自身收到 PATCH。本期为单实例 MVP 设计。Multi-worker 解决方案在 follow-up（Redis pub-sub 通知所有 worker invalidate）。
+- 没有"切换历史"审计日志。如果需要追溯"今天上午谁把 model 改成了 gpt-4o"，目前只能查 admin token 谁拿着。
+
+### 验证
+
+- 10 个单元断言（runtime_settings + client）
+- 7 个 HTTP E2E（GET 初态/PATCH/再 GET/bad URL/未知字段/reset/numeric-only）
+
+### 相关
+
+- 实现自 [ADR 006](docs/decisions/006-unified-llm-client.md) 「Future extension points」中的「Multi-Provider 路由表（admin 在 RuntimeSettings 里热改）」
+- 详细推演见 PR description
 
 ---
 
