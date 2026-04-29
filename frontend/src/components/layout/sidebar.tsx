@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useAuth } from "@/context/auth-context";
 import { useHistory } from "@/context/history-context";
 import {
   Plus,
@@ -9,6 +11,8 @@ import {
   PanelLeft,
   PanelLeftClose,
   Sparkles,
+  LogIn,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -66,6 +70,101 @@ function groupByDay(entries: HistoryEntry[]) {
   }
   return groups;
 }
+
+function AuthSection({ collapsed }: { collapsed: boolean }) {
+  const { user, status, isPro, logout } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div className={cn("flex items-center gap-2 px-2.5 h-9 text-muted-foreground", collapsed && "justify-center")}>
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      </div>
+    );
+  }
+
+  if (status === "anonymous") {
+    if (collapsed) {
+      return (
+        <Link
+          href="/auth/login"
+          aria-label="Sign in"
+          className="flex h-9 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <LogIn className="h-4 w-4" />
+        </Link>
+      );
+    }
+    return (
+      <div className="space-y-1">
+        <Link
+          href="/auth/login"
+          className="w-full flex items-center gap-2 px-2.5 h-9 rounded-lg text-[13px] font-medium text-foreground hover:bg-sidebar-accent transition-colors"
+        >
+          <LogIn className="h-4 w-4 text-muted-foreground" />
+          Sign in
+        </Link>
+        <Link
+          href="/auth/register"
+          className="w-full flex items-center gap-2 px-2.5 h-9 rounded-lg text-[12px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground transition-colors"
+        >
+          <span className="w-4" />
+          Create account
+        </Link>
+      </div>
+    );
+  }
+
+  // Authenticated
+  const initial = (user?.display_name || user?.email || "?").charAt(0).toUpperCase();
+
+  if (collapsed) {
+    return (
+      <button
+        onClick={logout}
+        title={`${user?.email} — click to sign out`}
+        aria-label="Sign out"
+        className="flex h-9 w-9 mx-auto items-center justify-center rounded-full bg-muted text-[12px] font-semibold hover:bg-sidebar-accent transition-colors"
+      >
+        {initial}
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 px-1">
+        <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-[12px] font-semibold flex-shrink-0">
+          {initial}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-medium truncate">
+            {user?.display_name || user?.email}
+          </p>
+          <p className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
+            {isPro ? (
+              <>
+                <Sparkles className="h-2.5 w-2.5 text-amber-500" />
+                <span className="font-medium text-amber-700 dark:text-amber-400">Pro</span>
+              </>
+            ) : (
+              <span>Free tier</span>
+            )}
+            <span>·</span>
+            <span className="truncate">{user?.email}</span>
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={logout}
+        className="w-full flex items-center gap-2 px-2.5 h-8 rounded-lg text-[12px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground transition-colors"
+      >
+        <LogOut className="h-3.5 w-3.5" />
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 
 export function Sidebar({
   activeEntryId,
@@ -182,16 +281,20 @@ export function Sidebar({
         </div>
       )}
 
-      {/* Footer */}
-      {!collapsed && (
-        <div className="px-3 py-3 border-t border-sidebar-border shrink-0">
-          <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
-            AI-powered SEC research.
-            <br />
-            Data sourced from EDGAR & FMP.
+      {/* Footer: auth section + tagline */}
+      <div
+        className={cn(
+          "border-t border-sidebar-border shrink-0",
+          collapsed ? "py-2" : "px-2 py-2 space-y-2"
+        )}
+      >
+        <AuthSection collapsed={collapsed} />
+        {!collapsed && (
+          <p className="text-[10px] text-muted-foreground/70 leading-relaxed px-1">
+            AI-powered SEC research. Data from EDGAR &amp; FMP.
           </p>
-        </div>
-      )}
+        )}
+      </div>
     </aside>
   );
 }

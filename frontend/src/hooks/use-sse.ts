@@ -46,7 +46,12 @@ export function useSSE({ url, enabled = true }: UseSSEOptions): UseSSEReturn {
     setEvents([]);
     setError(null);
 
-    const es = new EventSource(url);
+    // Same-origin requests via the Next.js rewrite proxy (see next.config.ts)
+    // already send cookies; ``withCredentials: true`` is redundant in that
+    // path. We keep it set so that bypassing the proxy via
+    // ``NEXT_PUBLIC_API_URL=http://...`` (direct cross-origin) still works,
+    // assuming the cookie SameSite policy permits it.
+    const es = new EventSource(url, { withCredentials: true });
     eventSourceRef.current = es;
 
     es.onopen = () => {

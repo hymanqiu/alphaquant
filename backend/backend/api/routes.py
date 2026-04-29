@@ -74,6 +74,13 @@ async def analyze_ticker(
     client_ip = _enforce_rate_limit(request, bucket=BUCKET_ANALYZE)
     graph = build_value_analyst_graph().compile()
     user_tier = user.tier if user is not None else "free"
+    logger.info(
+        "analyze_start ticker=%s user=%s tier=%s ip=%s",
+        ticker.upper(),
+        user.email if user is not None else "anonymous",
+        user_tier,
+        client_ip,
+    )
 
     async def event_generator() -> AsyncIterator[ServerSentEvent]:
         initial_state = {
