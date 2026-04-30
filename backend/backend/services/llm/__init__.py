@@ -12,6 +12,7 @@ from .client import (
     close_llm_client,
     get_accounting_store,
     get_llm_client,
+    invalidate_llm_client,
     is_llm_configured,
 )
 from .errors import (
@@ -37,6 +38,7 @@ __all__ = [
     "close_llm_client",
     "get_accounting_store",
     "get_llm_client",
+    "invalidate_llm_client",
     "is_llm_configured",
     "sanitize_list",
     "sanitize_text",

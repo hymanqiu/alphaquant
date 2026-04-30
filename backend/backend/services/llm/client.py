@@ -23,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 
 from backend.config import settings
 from backend.services.request_context import current_client_ip
+from backend.services.runtime_settings import get_runtime_settings
 
 from .accounting import AccountingStore
 from .budget import BudgetGate
@@ -235,27 +236,58 @@ def get_accounting_store() -> AccountingStore:
     return _accounting_store
 
 
+def _resolve(override: str, env_value: str) -> str:
+    """Override-with-env-fallback. Empty override = use env."""
+    return override if override else env_value
+
+
+def _effective_llm_config() -> dict[str, str]:
+    """Compute the LLM provider config in effect right now.
+
+    Override (RuntimeSettings, set by admin PATCH) wins over env. Empty
+    override falls back to env. This is the single source of truth read by
+    both ``_build_client`` and ``is_llm_configured``.
+    """
+    rt = get_runtime_settings().snapshot()
+    return {
+        "api_key": _resolve(rt.llm_api_key, settings.llm_api_key),
+        "base_url": _resolve(rt.llm_base_url, settings.llm_base_url),
+        "model": _resolve(rt.llm_model, settings.llm_model) or "deepseek-chat",
+        "narrative_api_key": _resolve(
+            rt.llm_narrative_api_key, settings.llm_narrative_api_key,
+        ),
+        "narrative_base_url": _resolve(
+            rt.llm_narrative_base_url, settings.llm_narrative_base_url,
+        ),
+        "narrative_model": _resolve(
+            rt.llm_narrative_model, settings.llm_narrative_model,
+        ),
+    }
+
+
 def _build_client() -> LLMClient:
-    if not settings.llm_api_key or not settings.llm_base_url:
+    cfg = _effective_llm_config()
+    if not cfg["api_key"] or not cfg["base_url"]:
         raise LLMConfigError(
-            "LLM not configured: AQ_LLM_API_KEY and AQ_LLM_BASE_URL must be set"
+            "LLM not configured: AQ_LLM_API_KEY and AQ_LLM_BASE_URL must be set "
+            "(or override via PATCH /api/admin/settings)"
         )
 
     http_client = _get_http_client()
     primary = OpenAICompatibleProvider(
         name="primary",
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model or "deepseek-chat",
+        api_key=cfg["api_key"],
+        base_url=cfg["base_url"],
+        model=cfg["model"],
         http_client=http_client,
     )
     narrative: Provider | None = None
-    if settings.llm_narrative_api_key and settings.llm_narrative_base_url:
+    if cfg["narrative_api_key"] and cfg["narrative_base_url"]:
         narrative = OpenAICompatibleProvider(
             name="narrative",
-            api_key=settings.llm_narrative_api_key,
-            base_url=settings.llm_narrative_base_url,
-            model=settings.llm_narrative_model or settings.llm_model or "deepseek-chat",
+            api_key=cfg["narrative_api_key"],
+            base_url=cfg["narrative_base_url"],
+            model=cfg["narrative_model"] or cfg["model"],
             http_client=http_client,
         )
 
@@ -282,7 +314,24 @@ def get_llm_client() -> LLMClient:
 
 
 def is_llm_configured() -> bool:
-    return bool(settings.llm_api_key and settings.llm_base_url)
+    """True iff there is a usable api_key + base_url after applying overrides."""
+    cfg = _effective_llm_config()
+    return bool(cfg["api_key"] and cfg["base_url"])
+
+
+def invalidate_llm_client() -> None:
+    """Drop the cached ``LLMClient`` so the next ``get_llm_client`` rebuilds.
+
+    Used by the admin handler after PATCHing LLM provider fields. The shared
+    httpx connection pool (``_http_client``) is NOT closed — switching to a
+    different ``base_url`` just opens new connections to the new host on the
+    same pool. Accounting state is preserved (so spend history survives).
+
+    In-flight requests using the old client continue to completion; only
+    subsequent ``get_llm_client()`` calls observe the change.
+    """
+    global _llm_client
+    _llm_client = None
 
 
 async def close_llm_client() -> None:
