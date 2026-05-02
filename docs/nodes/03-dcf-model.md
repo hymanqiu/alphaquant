@@ -15,20 +15,24 @@
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|:----:|------|
 | `financials` | `CompanyFinancials` | ✅ | → [Node 1 输出](01-fetch-sec-data.md#companyfinancials-结构体) |
+| `market_profile` | `dict \| None` | ⬜ | FMP profile (price/beta/market_cap)，缺失 → beta 回退 1.2、负权益回退到 cost_of_equity |
 
 ### 子字段访问
 
-节点实际从 `financials` 访问以下子字段 (`_run_dcf`, line 146):
+节点实际从 `financials` 和 `market_profile` 访问以下子字段 (`_run_dcf`, line 146):
 
 | 访问路径 | 类型 | 必需 | 用途 |
 |----------|------|:----:|------|
 | `financials.entity_name` | `str` | ✅ | UI 显示 |
 | `financials.ticker` | `str` | ✅ | 日志 |
 | `financials.free_cash_flow` | `list[AnnualMetric]` | ✅ | FCF 时间序列，需 ≥ 1 年；CAGR 需 ≥ 3 年 |
-| `financials.long_term_debt[-1].value` | `float \| None` | ⬜ | WACC 债务部分 (缺失 → 全权益模型) |
-| `financials.stockholders_equity[-1].value` | `float \| None` | ⬜ | WACC 权益部分 |
+| `financials.long_term_debt[-1].value` | `float \| None` | ⬜ | WACC 债务部分 (缺失 → 全权益模型)，同时用作净债务调整中的 debt |
+| `financials.stockholders_equity[-1].value` | `float \| None` | ⬜ | WACC 权益部分 (≤ 0 → 回退 market_cap) |
 | `financials.interest_expense[-1].value` | `float \| None` | ⬜ | 计算债务成本 |
+| `financials.cash_and_equivalents[-1].value` | `float \| None` | ⬜ | 净债务调整: equity_value = EV + cash − debt |
 | `financials.diluted_shares[-1].value` | `float \| None` | ⬜ | 每股价值 (缺失 → `intrinsic_value_per_share = None`) |
+| `market_profile.beta` | `float \| None` | ⬜ | CAPM beta (缺失 → 回退 1.2) |
+| `market_profile.market_cap` | `float \| None` | ⬜ | 负权益时的权益权重兜底 |
 
 ### NVDA 示例 (输入子字段)
 
@@ -80,7 +84,8 @@
     "terminal_pv": float,                     # 终值现值 ($)
     "pv_fcf_sum": float,                      # FCF 现值之和 ($)
     "enterprise_value": float,                # 企业价值 = pv_fcf_sum + terminal_pv ($)
-    "intrinsic_value_per_share": float | None, # 内在价值 ($/股), shares 缺失时为 None
+    "equity_value": float,                    # 股权价值 = EV + cash − debt (净债务调整) ($)
+    "intrinsic_value_per_share": float | None, # 内在价值 = equity_value / shares ($/股)
     "assumptions": {
         "growth_rate": float,                 # 初始增长率 (%)
         "terminal_growth_rate": float,        # 永续增长率 (%), 固定 3.0
@@ -92,7 +97,8 @@
 ```
 
 > **增长率估算**: `3yr CAGR × 0.6 + 5yr CAGR × 0.4`，上限 30%，下限 2%。不足时回退 10%。
-> **WACC**: `risk_free(4.5%) + beta(1.2) × ERP(5.5%)` 基础 + 债务调整 (无债务数据时回退 cost_of_equity)，下限 6%。
+> **WACC**: `risk_free(4.5%) + beta × ERP(5.5%)` 基础 + 债务调整。Beta 优先取 `market_profile.beta` (FMP)，缺失时回退 1.2。负权益时用 market_cap 替代权益权重。下限 4%。
+> **股权价值**: `EV + cash − debt`（净债务调整）；`per_share = equity_value / shares`。
 
 ### NVDA 示例 (输出)
 
@@ -137,10 +143,12 @@
    └── 封顶: min(max(raw_growth, 2%), 30%)
 
 2. 估算 WACC:
-   ├── cost_of_equity = risk_free(4.5%) + beta(1.2) × ERP(5.5%) = 11.1%
+   ├── beta = market_profile.beta or 1.2  (优先 FMP 实时值)
+   ├── cost_of_equity = risk_free(4.5%) + beta × ERP(5.5%)
    ├── cost_of_debt = interest / debt (仅当债务数据完整时)
+   ├── 若 stockholders_equity ≤ 0 且有 market_cap → 用 market_cap 替代权益权重
    ├── WACC = (E/V)×Re + (D/V)×Rd×(1-T)
-   └── floor: max(WACC, 6%)
+   └── floor: max(WACC, 4%)
    └── 债务数据缺失 → 回退全权益模型
 
 3. 两阶段 DCF (compute_dcf):
@@ -148,15 +156,17 @@
    ├── Phase 2 (Y6-10): 线性衰减 growth → terminal(3%)
    ├── Terminal Value = Y10_FCF × (1+terminal) / (discount - terminal)
    ├── EV = Σ PV(FCF) + PV(TV)
-   └── Intrinsic/Share = EV / diluted_shares
+   ├── Equity Value = EV + cash − debt  (净债务调整)
+   └── Intrinsic/Share = Equity Value / diluted_shares
 ```
 
 ## 关键假设
 
 - **两阶段 DCF 而非三阶段** → [ADR 002](../decisions/002-two-stage-dcf.md)
 - **独立重算端点而非重跑全图** → [ADR 004](../decisions/004-separate-recalc-endpoint.md)
-- WACC 参数硬编码：risk_free=4.5%, ERP=5.5%, beta=1.2, tax=21%
-- 增长率上限 30%，WACC 下限 6%，永续增长率固定 3%
+- WACC 参数：risk_free=4.5%, ERP=5.5%, tax=21% 硬编码；beta 从 FMP 动态获取（缺失时回退 1.2）
+- 增长率上限 30%，WACC 下限 4%，永续增长率固定 3%
+- 每股内在价值含净债务调整：`(EV + cash − debt) / shares`
 
 ## LLM 使用
 
@@ -195,5 +205,6 @@
 
 ## 未决问题 / TODO
 
-- [ ] risk_free_rate, beta 应从外部 API 动态获取
+- [x] beta 已从 FMP 动态获取（risk_free_rate 仍硬编码）
 - [ ] 是否支持用户选择衰减方式（线性 vs H-model）
+- [ ] 30% 增长率上限对超高增长公司（NVDA 类）严重低估，需要动态上限
