@@ -6,6 +6,7 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
+| v0.8.0 | 2026-05-01 | feat | **Verdict-First UI 重构（Phase 1）**：右侧 19 张卡片纵向堆叠 → sticky **Verdict Hero**（signal/MoS/confidence/risks/thesis/entry-exit 5 字段）+ **5 个 Tab**（Verdict / Valuation / Strategy / Risks & Moat / Sources）。`ConversationPanel` 在 `status==='complete'` 后自动折叠为 **56px rail**，点击展开 420px overlay。推理 trace 从 chat 移至 Sources tab。Tab 不自动切换，新卡片用脉冲点提示。 |
 | v0.7.1 | 2026-04-26 | docs | **文档体系重构（@Skyward666）**：ARCHITECTURE.md 拆分为三层文档体系（系统全景 + `docs/nodes/` 节点详情 + `docs/decisions/` 架构决策记录）。8 个核心节点文档全面重写（含 I/O 结构体定义 + NVDA 示例 + 失败模式）；5 个 ADR 记录关键架构决策。__注：本次新增的 v0.5/0.6/0.7 节点（qualitative_analysis / risk_yoy_diff / moat_analysis / investment_thesis）的 docs/nodes/ 文档将在 follow-up PR 中补齐__ |
 | v0.7.0 | 2026-04-25 | feat | **认证 + 订阅分级（Phase 2）**：邮箱/密码 + Magic Link + Google OAuth 三种登录方式；PostgreSQL 持久化；JWT 会话；4 个 Pro 节点按 user.tier 门控（free 用户看到锁定预览卡）；admin 可手动升级用户为 Pro。新增 `services/auth/` 模块、Alembic 迁移、AuthProvider Context、登录/注册页 |
 | v0.6.0 | 2026-04-25 | feat | **5 个 LLM Pro 节点（Phase 3）**：投资论点生成器、10-K MD&A 定性分析、10-K Risk Factors 抽取、10-K YoY 风险变化对比、Hamilton Helmer 7 Powers 护城河评分。统一逐字引文核验防幻觉；分析管线从 8 节点扩至 12 节点 |
@@ -14,6 +15,60 @@
 | v0.3.0 | 2026-04-21 | feat | 消息面情绪修正：Finnhub 新闻 + 内部人情绪 → 综合评分 → 安全边际调整。新增 Finnhub 客户端、DeepSeek LLM 情绪分析、sentiment_card 组件 |
 | v0.2.0 | 2026-04-17 | feat | 相对估值（市场乘数法）：当前乘数 + 历史百分位 + 同业对比。新增 FMP API 客户端、relative_valuation_card 组件 |
 | v0.1.0 | 2026-04-17 | — | 初始版本：SEC EDGAR 数据获取、财务健康扫描、DCF 估值建模、买入策略、数据溯源、SSE + Generative UI |
+
+---
+
+## v0.8.0 — Verdict-First UI 重构（Phase 1）
+
+**日期：** 2026-05-01
+
+### 概要
+
+原右侧 canvas 把 19 张分析卡片纵向堆叠在一列里（约 4000–6000px），用户输入 ticker 后要滚 5000px 才能拼出"该不该买、多有把握、为什么"的答案。本次重构按"答案→佐证→深挖→透明度"分层信息架构：
+
+1. **Verdict Hero**（sticky 顶部，5 字段）：signal pill / margin of safety / confidence / 高严重风险计数 / 一句话 thesis + entry/exit 价格区间。从已经在流的组件中派生，不重算。
+2. **5 个 Tab** 把 19 张卡片按角色分组：Verdict（推荐+论点）/ Valuation（估值数字）/ Strategy（时机/情绪）/ Risks & Moat（风险+护城河）/ Sources（来源 + 推理 trace）。
+3. **Conversation panel 折叠 rail**：流式中保持 420px 满展开（看进度+推理）；`status==='complete'` 后自动折叠成 56px rail。点 rail 弹出 420px overlay（不挤压 canvas，点遮罩或 X 关闭）。
+4. **流式 UX**：tab 不自动切换（避免抢焦点），非活动 tab 收到新卡片时脉冲红点提示。`risk_factors_card.severity == 'high'` 数 > 0 时 Hero 的 Risks 块变红可点跳 Risks tab。
+
+### 前端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/components/canvas/tab-groups.ts` | `TabId` 类型 + `TAB_ORDER` / `TAB_LABELS` / `tabFor(componentType)` 映射。19 张卡 → 5 tab，未识别类型 fallback 到 Sources |
+| `frontend/src/components/canvas/verdict-hero.tsx` | Hero 组件 + `deriveHero(components)`：从 `investment_thesis_card` / `strategy_dashboard` / `risk_factors_card` / `valuation_gauge` 派生 12 字段。recommendation 优先于 strategy.signal。Free tier 无 thesis card 时用 strategy.signal 兜底 |
+| `frontend/src/components/canvas/canvas-tabs.tsx` | shadcn Tabs 包裹的 5-tab 壳。`seenCounts` lazy-init 全 tab，pulse-dot 仅对**之后**到达的卡片触发。Sources tab 末尾追加 `<ReasoningTrace>` |
+| `frontend/src/components/canvas/reasoning-trace.tsx` | 推理 trace 卡。从原 `ConversationPanel` 的 per-node accordion 搬过来，按节点分组渲染 |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `frontend/src/components/analysis-canvas.tsx` | 扁平 `.map` 替换为 `<VerdictHero>` + `<CanvasTabs>` 双区。Hero 取自然高度，Tabs 内部独立滚动。`key={activeEntryId}` 强制切换缓存条目时 `seenCounts`/`activeTab` 重置 |
+| `frontend/src/components/conversation-panel.tsx` | 加 `collapsed` prop + `ConversationRail`（56px 单按钮）变体；`showCloseButton`+`onClose` 用于 overlay 模式；首次完成时一次性 localStorage tooltip。**移除** per-node 推理 accordion（搬到 Sources tab） |
+| `frontend/src/components/layout/app-shell.tsx` | 新增 `overlayOpen` 状态。`showRail = !isStreaming && ticker !== null`、`showOverlay = showRail && overlayOpen` 由 `displayStatus` 推导（不用 setState-in-effect）。Overlay 用 `absolute inset-0` 黑色 backdrop + `absolute left-[56px]` 浮层，点击 backdrop 或 X 按钮关闭 |
+
+### 设计决策
+
+- **Tabs 不自动切换**：避免抢焦点；脉冲红点提示新卡到达，由用户主动点击。
+- **Hero 单一来源**：直接读组件 props，不重算 → 永远不会和 tab 内部卡片不一致。
+- **推理 trace 移至 Sources tab**：折叠后 chat 只剩进度+verdict+输入框，避免折叠/展开间用户重读推理。
+- **Conversation panel 折叠为 rail 而非全隐藏**：保留 follow-up 提问的入口（Phase 3 会接 LLM）。
+- **流式期 vs 完成期分离 layout**：流式时 chat 重要，完成时 canvas 重要。Layout 跟随用户当前意图。
+
+### 拒绝的备选方案
+
+- ❌ **左侧 TOC 导航条**：scroll-spy 只是给那条 5000px 滚动加目录。把"信息过载"当导航问题处理 — 但实际是注意力问题。Tabs **隐藏**非当前组才是关键。
+- ❌ **chat 移到 hero 下变水平条**：保留 chat 可见性诱人，但牺牲垂直空间（图表的稀缺轴）。折叠到 rail 更诚实。
+- ❌ **游戏化徽章 / 社交 feed / 未触发的 AI 弹窗**：受众是投资人不是社交产品用户。
+
+### 验证
+
+- TS 通过（仅 fcf-chart/revenue-chart 已知 recharts 类型问题）
+- ESLint 通过（react-hooks/refs、react-hooks/set-state-in-effect、react-hooks/static-components 全部 0 错）
+- 手动验证：ticker 输入 → hero 字段渐入 → tab 计数 badge 增长 → 完成后 chat 折叠 → 点 rail 展开 overlay → 点遮罩关闭
 
 ---
 

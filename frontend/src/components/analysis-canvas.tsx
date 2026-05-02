@@ -1,14 +1,22 @@
 "use client";
 
-import { Suspense } from "react";
+import { useMemo, useState } from "react";
 import { BarChart3, Monitor, CheckCircle2 } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
-import { getComponent } from "@/components/component-registry";
-import type { ComponentInstruction, SSEStatus } from "@/lib/types";
+import { VerdictHero } from "@/components/canvas/verdict-hero";
+import { CanvasTabs } from "@/components/canvas/canvas-tabs";
+import { groupByTab, tabFor, type TabId } from "@/components/canvas/tab-groups";
+import type {
+  AnalysisStep,
+  ComponentInstruction,
+  SSEStatus,
+  ThinkingMessage,
+} from "@/lib/types";
 
 interface AnalysisCanvasProps {
   ticker: string | null;
   components: ComponentInstruction[];
+  thinkingMessages: ThinkingMessage[];
+  steps: AnalysisStep[];
   onRecalculate?: (data: Record<string, unknown>) => void;
   status: SSEStatus;
 }
@@ -29,10 +37,20 @@ function EmptyCanvas() {
 export function AnalysisCanvas({
   ticker,
   components,
+  thinkingMessages,
+  steps,
   onRecalculate,
   status,
 }: AnalysisCanvasProps) {
   const isActive = status === "connecting" || status === "connected";
+  const groups = useMemo(() => groupByTab(components), [components]);
+  const [activeTab, setActiveTab] = useState<TabId>("verdict");
+
+  // Plan §流式 UX: Tab does not auto-switch when new cards arrive — the pulse-dot
+  // badge in the tab bar grabs attention while leaving the user in control.
+  // For cached views with no Verdict cards, the user lands on Verdict's empty
+  // state which surfaces "No data in this section"; they can click a populated
+  // tab from the bar.
 
   if (!ticker) {
     return (
@@ -51,12 +69,8 @@ export function AnalysisCanvas({
             <Monitor className="h-3.5 w-3.5 text-muted-foreground" />
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="font-mono font-bold text-[15px] tracking-tight">
-              {ticker}
-            </span>
-            <span className="text-[12px] text-muted-foreground">
-              analysis canvas
-            </span>
+            <span className="font-mono font-bold text-[15px] tracking-tight">{ticker}</span>
+            <span className="text-[12px] text-muted-foreground">analysis canvas</span>
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">
@@ -78,55 +92,46 @@ export function AnalysisCanvas({
         </div>
       </div>
 
-      {/* Components */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        <div className="max-w-5xl mx-auto p-6 space-y-4">
-          {components.length === 0 && isActive && (
-            <div className="text-center text-muted-foreground py-16">
-              <div className="inline-flex items-center gap-2 text-[13px]">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full rounded-full bg-[var(--brand)] opacity-60 animate-ping" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
-                </span>
-                Waiting for analysis results…
-              </div>
+      {/* Hero (sticky) + Tabs (sticky tab bar + scrollable content) */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {components.length === 0 && isActive && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="inline-flex items-center gap-2 text-[13px] text-muted-foreground">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[var(--brand)] opacity-60 animate-ping" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+              </span>
+              Waiting for analysis results…
             </div>
-          )}
+          </div>
+        )}
 
-          {components.length === 0 && !isActive && status !== "complete" && (
-            <EmptyCanvas />
-          )}
+        {components.length === 0 && !isActive && status !== "complete" && <EmptyCanvas />}
 
-          {components.map((instruction) => {
-            const Component = getComponent(instruction.component_type);
-            if (!Component) {
-              return (
-                <div
-                  key={instruction.id}
-                  className="p-4 border border-dashed rounded-xl text-muted-foreground text-sm"
-                >
-                  Unknown component: {instruction.component_type}
-                </div>
-              );
-            }
-            return (
-              <div
-                key={instruction.id}
-                className="animate-in fade-in slide-in-from-bottom-2 duration-300"
-              >
-                <Suspense
-                  fallback={<Skeleton className="h-48 w-full rounded-xl" />}
-                >
-                  <Component
-                    {...instruction.props}
-                    onRecalculate={onRecalculate}
-                  />
-                </Suspense>
-              </div>
-            );
-          })}
-        </div>
+        {components.length > 0 && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <VerdictHero
+              ticker={ticker}
+              components={components}
+              status={status}
+              onJumpToTab={(t) => setActiveTab(t)}
+            />
+            <CanvasTabs
+              groups={groups}
+              status={status}
+              thinkingMessages={thinkingMessages}
+              steps={steps}
+              onRecalculate={onRecalculate}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// Re-export so callers can determine which tab a streaming card belongs to
+// (e.g. the conversation panel's "deep-link to Sources" button).
+export { tabFor };

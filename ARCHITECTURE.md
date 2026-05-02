@@ -1262,3 +1262,85 @@ alpha/
 ```
 
 > **注**: 未设置 `AQ_FMP_API_KEY` 时, 相对估值和策略分析自动跳过。未设置 `AQ_FINNHUB_API_KEY` 时, 消息面情绪节点自动跳过。其余功能正常。在 `.env` 中设置即可启用, config.py 会自动从项目根目录向上查找该文件。
+
+---
+
+## 15. UI Phase 1 — Verdict-First 重构（v0.8.0）
+
+原右侧 canvas 把 19 张卡片纵向堆叠在 4000-6000px 长的列里。本次重构把它替换为：
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Verdict Hero (sticky)                                │
+│  AAPL · Apple Inc.            $189.50 market         │
+│  [BUY pill] [+18% MoS] [72% High conf] [3 high ⚠]   │
+│  "20% discount to intrinsic; services growth slows"  │
+│  Buy < $185 · IV $215 · Upside +14%                  │
+├─────────────────────────────────────────────────────┤
+│ [Verdict 5][Valuation 8 ●][Strategy 2][Risks 3⚠][Sources 1] │
+├─────────────────────────────────────────────────────┤
+│  <当前 tab 的卡片，内部独立滚动>                          │
+└─────────────────────────────────────────────────────┘
+```
+
+### 信息架构
+
+| Tab | 包含组件 | 角色 |
+|---|---|---|
+| Verdict | `investment_thesis_card` (+ pro-locked) · `qualitative_insights_card` (+ pro-locked) · `strategy_dashboard` | 答案 + 推荐 + 入场区间 |
+| Valuation | `dcf_result_card` · `valuation_gauge` · `assumption_slider` · `fcf_chart` · `revenue_chart` · `relative_valuation_card` · `metric_table` · `financial_health_card` | 估值数字（最重 tab） |
+| Strategy | `sentiment_card` · `event_impact_card` | 时机 / 催化剂 / 情绪 |
+| Risks & Moat | `risk_factors_card` · `risk_yoy_diff_card` (+ pro-locked) · `moat_analysis_card` (+ pro-locked) | 风险与护城河 |
+| Sources | `source_table` + 推理 trace（per-node accordion） | 透明度 / 较真用户 |
+
+映射在 `frontend/src/components/canvas/tab-groups.ts` 单一来源。新分析卡只需在该文件加映射即可。
+
+### Hero 字段派生（无重算）
+
+`deriveHero(components)` 从已经在 canvas 上的 `ComponentInstruction[]` 派生 12 字段：
+
+- `signalLabel` / `signalKind`: 优先 `investment_thesis_card.recommendation`（Strong Buy/Buy/Hold/Reduce/Sell），fallback `strategy_dashboard.signal`（Deep Value/Undervalued/Fair Value/Overvalued）— Free 用户无 thesis card 时仍能显示信号
+- `marginOfSafety` / `upside` / `currentPrice` / `intrinsicValue` / `suggestedEntry`: `strategy_dashboard`
+- `confidence` / `thesisHeadline`: `investment_thesis_card`
+- `highSeverityRiskCount` / `totalRisksReported`: `risk_factors_card.top_risks` 中 `severity == "high"` 计数
+
+Hero 直接读 props，不重计算。Tab 内卡片显示完整数据；hero 是"电梯演讲"摘要。
+
+### Conversation panel 状态机
+
+```
+idle ──submit──▶ streaming（420px 满展开，进度+推理可见）
+                    │
+              status===complete
+                    ▼
+           collapsed（56px 轨：avatar + Ask icon）
+                    │
+              user click rail
+                    ▼
+            expanded as overlay（不挤压 canvas，420px 浮层）
+                    │
+              点遮罩 / 点 X
+                    ▼
+                  rail
+```
+
+派生态实现（不用 setState-in-effect）：
+```
+isStreaming = displayStatus === "connecting" || "connected"
+showRail    = !isStreaming && ticker !== null
+showOverlay = showRail && overlayOpen
+```
+
+`overlayOpen` 是唯一用户驱动的标志，由 rail 点击 + 遮罩点击驱动；其余由 displayStatus 派生。
+
+### 流式 UX 细节
+
+- **Tabs 不自动切换** — 抢焦点是反 UX。新卡片到达非活动 tab 时，tab 标题脉冲红点；用户主动点击。
+- **Hero 渐入** — signal 先到、MoS 次到、thesis 最后；3 秒就能看到答案在成型。
+- **Risks 块** — `highSeverityRiskCount > 0` 时变红，可点跳 Risks tab。
+- **CanvasTabs `seenCounts` lazy-init** — 全 tab 用挂载时 group counts 初始化，pulse-dot 仅对**之后**到达的卡片触发；缓存视图（一次性全部到位）不显示假新卡提示。
+- **`<AnalysisCanvas key={activeEntryId}>`** — 历史切换时 `seenCounts` / `activeTab` 等内部状态干净重置。
+
+### 新增/修改文件
+
+参见 [CHANGELOG.md `v0.8.0`](CHANGELOG.md#v080--verdict-first-ui-重构phase-1) 的"前端变更"节。
