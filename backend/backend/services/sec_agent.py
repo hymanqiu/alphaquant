@@ -40,7 +40,15 @@ TAG_MAP: dict[str, list[str]] = {
         "PaymentsToAcquireProductiveAssets",
     ],
     "interest_expense": ["InterestExpense", "InterestExpenseDebt"],
-    "long_term_debt": ["LongTermDebt", "LongTermDebtNoncurrent"],
+    "long_term_debt": [
+        # ASC 842 (post-2019) consolidates long-term debt + finance lease obligations
+        # under this tag. Many large filers (KO, MCD, AAPL, etc.) only populate the
+        # legacy LongTermDebt tag for older filings, so the lease-inclusive tag is
+        # required for fresh data.
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermDebt",
+        "LongTermDebtNoncurrent",
+    ],
     "cash_and_equivalents": [
         "CashAndCashEquivalentsAtCarryingValue",
         "CashCashEquivalentsAndShortTermInvestments",
