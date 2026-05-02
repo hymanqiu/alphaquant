@@ -180,10 +180,13 @@ def apply_all_adjustments(
 def recalculate_dcf(
     adjusted_assumptions: dict[str, float],
     shares_outstanding: float | None,
+    cash: float | None = None,
+    total_debt: float | None = None,
 ) -> dict[str, Any]:
     """Run DCF model with adjusted assumptions.
 
     Converts percentage values to decimals before passing to compute_dcf.
+    Forwards ``cash`` and ``total_debt`` for net debt adjustment.
     """
     growth_rate = adjusted_assumptions.get("growth_rate", 10.0) / 100
     terminal_growth = adjusted_assumptions.get("terminal_growth_rate", 3.0) / 100
@@ -196,6 +199,8 @@ def recalculate_dcf(
         terminal_growth_rate=terminal_growth,
         discount_rate=discount_rate,
         shares_outstanding=shares_outstanding,
+        cash=cash,
+        total_debt=total_debt,
     )
 
 

@@ -292,8 +292,18 @@ async def _run_event_impact(
     shares = None
     if financials.diluted_shares:
         shares = financials.diluted_shares[-1].value
+    cash = (
+        financials.cash_and_equivalents[-1].value
+        if financials.cash_and_equivalents
+        else None
+    )
+    debt = (
+        financials.long_term_debt[-1].value
+        if financials.long_term_debt
+        else None
+    )
 
-    recalculated_dcf = recalculate_dcf(adjusted_assumptions, shares)
+    recalculated_dcf = recalculate_dcf(adjusted_assumptions, shares, cash=cash, total_debt=debt)
 
     reasoning.append(f"Impact analysis summary: {analysis_result['summary']}")
     reasoning.append(f"Confidence: {analysis_result['confidence']:.0%}")

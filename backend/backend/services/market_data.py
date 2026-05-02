@@ -53,10 +53,11 @@ class MarketDataClient:
         return None
 
     async def get_company_profile(self, ticker: str) -> dict[str, Any]:
-        """Fetch GICS sector/industry, TTM dividend, and price. Returns {} on failure.
+        """Fetch GICS sector/industry, TTM dividend, price, beta, and market cap.
 
-        Also returns ``price`` — the profile endpoint includes it and works on
-        FMP free-tier symbols that ``/stable/quote`` rejects as premium-only.
+        Returns {} on failure. Also returns ``price`` — the profile endpoint
+        includes it and works on FMP free-tier symbols that ``/stable/quote``
+        rejects as premium-only.
         """
         if not settings.fmp_api_key:
             return {}
@@ -71,11 +72,15 @@ class MarketDataClient:
                 item = data[0]
                 last_div = item.get("lastDividend")
                 price = item.get("price")
+                beta = item.get("beta")
+                mkt_cap = item.get("mktCap") or item.get("marketCap")
                 return {
                     "sector": item.get("sector") or None,
                     "industry": item.get("industry") or None,
                     "last_dividend": float(last_div) if last_div else None,
                     "price": float(price) if price else None,
+                    "beta": float(beta) if beta is not None else None,
+                    "market_cap": float(mkt_cap) if mkt_cap is not None else None,
                 }
         except httpx.HTTPStatusError as e:
             logger.warning("FMP get_company_profile(%s) HTTP %s", ticker, e.response.status_code)
