@@ -148,3 +148,36 @@ export interface SavedThesisSummary {
 export interface SavedThesisFull extends SavedThesisSummary {
   components_snapshot: ComponentInstruction[];
 }
+
+// ---------------------------------------------------------------------------
+// Watchlist (Phase 3)
+// ---------------------------------------------------------------------------
+
+export interface WatchlistItem {
+  id: number;
+  ticker: string;
+  target_mos_pct: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  last_checked_at: string | null;
+  last_mos_pct: number | null;
+  last_signal: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up Q&A (Phase 3)
+// ---------------------------------------------------------------------------
+
+export type TabHint =
+  | "verdict"
+  | "valuation"
+  | "strategy"
+  | "risks"
+  | "sources"
+  | null;
+
+export interface FollowUpAnswer {
+  answer: string;
+  tab_hint: TabHint;
+  confidence: number;
+}

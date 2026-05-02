@@ -11,8 +11,15 @@ import {
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { FollowUpSection } from "@/components/canvas/follow-up-section";
+import type { TabId } from "@/components/canvas/tab-groups";
 import { cn } from "@/lib/utils";
-import type { AnalysisStep, SSEStatus, ThinkingMessage } from "@/lib/types";
+import type {
+  AnalysisStep,
+  ComponentInstruction,
+  SSEStatus,
+  ThinkingMessage,
+} from "@/lib/types";
 
 interface ConversationPanelProps {
   ticker: string | null;
@@ -26,6 +33,10 @@ interface ConversationPanelProps {
   showCloseButton?: boolean;
   onExpand?: () => void;
   onClose?: () => void;
+  /** Components on the current canvas — used by Follow-up Q&A as context. */
+  components?: ComponentInstruction[];
+  /** Switch the canvas to a specific tab (used by Follow-up tab_hint links). */
+  onJumpToTab?: (tab: TabId) => void;
 }
 
 const STEP_DESCRIPTIONS: Record<string, string> = {
@@ -200,6 +211,8 @@ export function ConversationPanel({
   showCloseButton = false,
   onExpand,
   onClose,
+  components,
+  onJumpToTab,
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState("");
@@ -346,6 +359,17 @@ export function ConversationPanel({
           </div>
         )}
 
+        {/* Follow-up Q&A — only when analysis is complete and we have context.
+            `key={ticker}` forces remount on ticker change so the Q&A thread
+            doesn't leak across cached-history switches. */}
+        {status === "complete" && ticker && components && components.length > 0 && (
+          <FollowUpSection
+            key={ticker}
+            ticker={ticker}
+            components={components}
+            onJumpToTab={onJumpToTab}
+          />
+        )}
       </div>
 
       {/* Floating pill input */}

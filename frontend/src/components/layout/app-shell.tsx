@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { ConversationPanel } from "@/components/conversation-panel";
 import { AnalysisCanvas } from "@/components/analysis-canvas";
 import { EmptyState } from "@/components/empty-state";
+import type { TabId } from "@/components/canvas/tab-groups";
 import { useAnalysisStream } from "@/hooks/use-analysis-stream";
 import { useHistory } from "@/context/history-context";
 import { API_BASE_URL } from "@/lib/constants";
@@ -56,6 +57,10 @@ export function AppShell({ initialTicker }: AppShellProps) {
   //   complete   → "rail"     (56px collapsed)
   //   complete + overlayOpen → rail + floating overlay panel
   const [overlayOpen, setOverlayOpen] = useState(false);
+
+  // activeTab lives here so the conversation panel's Follow-up Q&A
+  // tab_hint can switch the canvas tab from inside the overlay.
+  const [activeTab, setActiveTab] = useState<TabId>("verdict");
 
   const statusRef = useRef(stream.status);
   useEffect(() => {
@@ -199,6 +204,7 @@ export function AppShell({ initialTicker }: AppShellProps) {
       entryIdRef.current = null;
       setActiveEntryId(null);
       setOverlayOpen(false);
+      setActiveTab("verdict");
     },
     [cleanupPrevious]
   );
@@ -215,6 +221,7 @@ export function AppShell({ initialTicker }: AppShellProps) {
         entryIdRef.current = entry.id;
         setActiveEntryId(entry.id);
         setOverlayOpen(false);
+        setActiveTab("verdict");
       } else {
         handleSubmitTicker(entry.ticker);
       }
@@ -231,7 +238,13 @@ export function AppShell({ initialTicker }: AppShellProps) {
     entryIdRef.current = null;
     setActiveEntryId(null);
     setOverlayOpen(false);
+    setActiveTab("verdict");
   }, [cleanupPrevious]);
+
+  const handleJumpToTab = useCallback((t: TabId) => {
+    setActiveTab(t);
+    setOverlayOpen(false);
+  }, []);
 
   const handleRecalculate = useCallback(async (data: Record<string, unknown>) => {
     try {
@@ -259,6 +272,8 @@ export function AppShell({ initialTicker }: AppShellProps) {
     verdict: displayVerdict,
     error: displayError,
     onSubmitTicker: handleSubmitTicker,
+    components: displayComponents,
+    onJumpToTab: handleJumpToTab,
   };
 
   return (
@@ -310,6 +325,8 @@ export function AppShell({ initialTicker }: AppShellProps) {
               steps={displaySteps}
               onRecalculate={handleRecalculate}
               status={displayStatus}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
             />
           </>
         )}

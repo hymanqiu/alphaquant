@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { BarChart3, Monitor, CheckCircle2 } from "lucide-react";
 import { VerdictHero } from "@/components/canvas/verdict-hero";
 import { CanvasTabs } from "@/components/canvas/canvas-tabs";
@@ -19,6 +19,10 @@ interface AnalysisCanvasProps {
   steps: AnalysisStep[];
   onRecalculate?: (data: Record<string, unknown>) => void;
   status: SSEStatus;
+  /** activeTab is lifted to AppShell so the conversation panel can deep-link
+   *  into a tab via Follow-up Q&A's tab_hint. */
+  activeTab: TabId;
+  onTabChange: (tab: TabId) => void;
 }
 
 function EmptyCanvas() {
@@ -41,10 +45,11 @@ export function AnalysisCanvas({
   steps,
   onRecalculate,
   status,
+  activeTab,
+  onTabChange,
 }: AnalysisCanvasProps) {
   const isActive = status === "connecting" || status === "connected";
   const groups = useMemo(() => groupByTab(components), [components]);
-  const [activeTab, setActiveTab] = useState<TabId>("verdict");
 
   // Plan §流式 UX: Tab does not auto-switch when new cards arrive — the pulse-dot
   // badge in the tab bar grabs attention while leaving the user in control.
@@ -114,7 +119,7 @@ export function AnalysisCanvas({
               ticker={ticker}
               components={components}
               status={status}
-              onJumpToTab={(t) => setActiveTab(t)}
+              onJumpToTab={(t) => onTabChange(t)}
             />
             <CanvasTabs
               groups={groups}
@@ -123,7 +128,7 @@ export function AnalysisCanvas({
               steps={steps}
               onRecalculate={onRecalculate}
               activeTab={activeTab}
-              onTabChange={setActiveTab}
+              onTabChange={onTabChange}
             />
           </div>
         )}

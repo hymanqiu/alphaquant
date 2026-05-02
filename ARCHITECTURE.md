@@ -1413,3 +1413,119 @@ Sidebar
 - **`isSnapshotView` prop** — 防止跨用户跨时间无意义 diff（你访问别人的 AAPL share 时，"你自己的 saved AAPL" 不应被 diff）
 - **`is_public` 默认 true** — 保存的本意通常是分享，private 是少数
 - **乐观 UI** — save/remove 不等列表刷新；失败由 catch 兜底（v0.9 仅 console.warn，未来加 toast）
+
+---
+
+## 17. Watchlist + Follow-up Q&A（v0.10.0）
+
+留存层闭环 + Pro 用户的对话式深挖入口。
+
+### Watchlist 数据模型
+
+```
+watchlist_items
+├── id              integer (auto)
+├── user_id         FK users.id (CASCADE)
+├── ticker          string(8)
+├── target_mos_pct  float | null            "MoS ≥ X% 时告警"
+├── created_at, updated_at, last_checked_at timestamptz
+├── last_mos_pct, last_signal               cron 写回字段（v0.10 占位）
+└── UNIQUE (user_id, ticker)
+```
+
+> 表在 v0.9 迁移中已创建；本版本启用 CRUD endpoint + UI。
+
+### API 表面
+
+| 端点 | 授权 | 行为 |
+|---|---|---|
+| `GET /api/watchlist` | required | 返回 `{items: [WatchlistItem]}` |
+| `PUT /api/watchlist/{ticker}` | required | upsert（按 user_id+ticker 唯一）；`target_mos_pct` 验证 `[-100, 100]` |
+| `DELETE /api/watchlist/{ticker}` | required | 204 |
+| `POST /api/follow-up` | **require_pro** | body `{ticker, question, hero_snapshot?, components_snapshot[]}` → `{answer, tab_hint, confidence}` |
+
+### Follow-up Q&A 流程
+
+```
+用户在 overlay conversation 输入问题
+   ↓
+askFollowUp() POST /api/follow-up
+   ↓
+backend:
+   1. require_pro gate（401/403）
+   2. BUCKET_RECALCULATE rate limit（30/day per IP，与 DCF recalc 共池）
+   3. bind_client_ip → 计费归属用户
+   4. _hero_summary + _components_summary 拼 prompt 变量（components 截 12 张）
+   5. complete_json("follow_up", v=1, FollowUpAnswer)
+   6. 返回 {answer, tab_hint, confidence}
+   ↓
+frontend:
+   thread.push({state: ok, answer})
+   tab_hint 严格 5 选 1 验证 → "See Valuation tab →" 可点击
+```
+
+### Prompt 模板（`follow_up_v1.yaml`）
+
+- temperature 0.4 / max_tokens 1200
+- System prompt 边界：
+  - 仅基于 payload 内容回答，不臆造数据
+  - what-if 类问题做方向性推理而非编造精确数字
+  - 1-3 短段落，无 heading
+  - `<<<USER_CONTENT>>>` / `<<<END_USER_CONTENT>>>` 标记 + DATA-only 反注入
+  - JSON schema 强约束 `tab_hint ∈ verdict|valuation|strategy|risks|sources|null`
+
+### 状态提升：activeTab from AnalysisCanvas → AppShell
+
+```
+AppShell
+├── overlayOpen: boolean         （rail vs overlay panel）
+├── activeTab: TabId             ← v0.10 lift up
+├── handleJumpToTab(t)           setActiveTab(t) + setOverlayOpen(false)
+│
+├── <ConversationPanel components onJumpToTab={handleJumpToTab} />
+│       └── <FollowUpSection key={ticker} ...>
+│              └── tab_hint button → calls onJumpToTab(validTab)
+│
+└── <AnalysisCanvas activeTab onTabChange />
+       └── <VerdictHero onJumpToTab={onTabChange} />（risks badge）
+       └── <CanvasTabs activeTab onTabChange />
+```
+
+`activeTab` 提升使两个独立组件树（conversation overlay、canvas）能互相切 tab。
+
+### 竞态修复：AbortController 在 saved-thesis + watchlist contexts
+
+```
+const inflightRef = useRef<AbortController | null>(null);
+
+const refresh = useCallback(async () => {
+  inflightRef.current?.abort();             // 1. cancel prev
+  if (status !== "authenticated") {
+    setItems([]); return;                    // logout 立即清空
+  }
+  const c = new AbortController();
+  inflightRef.current = c;
+  try {
+    const fresh = await listX(c.signal);
+    if (!c.signal.aborted) setItems(fresh);  // 2. post-await aborted check
+  } catch { /* AbortError or network */ }
+  finally {
+    if (inflightRef.current === c) {         // 3. 不污染更新 controller
+      inflightRef.current = null;
+      setLoading(false);
+    }
+  }
+}, [status]);
+
+useEffect(() => () => inflightRef.current?.abort(), []);  // unmount cleanup
+```
+
+防止 logout 时 prev auth'd fetch 的 200 响应在 logout 后回来 setItems(authData) 覆盖 setItems([])。
+
+### 关键决策
+
+- **Pro gate on `/api/follow-up`** — 与 Pro LLM 节点等级一致；free 用户得 403 friendly upgrade message
+- **Watchlist 点击 = 重分析** — 用户点 sidebar ticker 想看最新数据，不是查看 watchlist 历史
+- **FollowUpSection `key={ticker}`** — ticker 切换时 thread / input state 干净重置
+- **`hasPending` 阻塞双提交** — `idx = thread.length` 闭包+连按 Enter 会让两个 setState 落到同一 thread 槽
+- **客户端 [-100, 100] 验证** — 后端 422 静默吞会让用户以为已加 watch，前端范围检查 + 红框 + disable 提交避免

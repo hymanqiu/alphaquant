@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useAuth } from "@/context/auth-context";
 import { useHistory } from "@/context/history-context";
 import { useSavedTheses } from "@/context/saved-thesis-context";
+import { useWatchlist } from "@/context/watchlist-context";
 import {
   Plus,
   Check,
@@ -15,12 +16,13 @@ import {
   LogIn,
   LogOut,
   Bookmark,
+  Eye,
   X,
   ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { HistoryEntry, SavedThesisSummary } from "@/lib/types";
+import type { HistoryEntry, SavedThesisSummary, WatchlistItem } from "@/lib/types";
 
 interface SidebarProps {
   activeEntryId: string | null;
@@ -170,6 +172,74 @@ function AuthSection({ collapsed }: { collapsed: boolean }) {
 }
 
 
+function WatchlistSection({
+  onSelectTicker,
+}: {
+  onSelectTicker: (ticker: string) => void;
+}) {
+  const { items, remove } = useWatchlist();
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-3 first:mt-1">
+      <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground/70 inline-flex items-center gap-1.5">
+        <Eye className="h-2.5 w-2.5" />
+        Watching
+      </p>
+      <div className="space-y-0.5">
+        {items.map((item) => (
+          <WatchlistRow
+            key={item.id}
+            item={item}
+            onClick={() => onSelectTicker(item.ticker)}
+            onRemove={() => remove(item.ticker).catch(() => {})}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WatchlistRow({
+  item,
+  onClick,
+  onRemove,
+}: {
+  item: WatchlistItem;
+  onClick: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="group flex items-center gap-1 pr-1 rounded-lg hover:bg-sidebar-accent/60">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex-1 flex items-center gap-2 px-2.5 h-8 text-[13px] text-left text-sidebar-foreground/80 hover:text-sidebar-foreground transition-colors"
+        title={`Re-analyze ${item.ticker}`}
+      >
+        <span className="font-mono font-semibold text-[12px] shrink-0 tracking-tight">
+          {item.ticker}
+        </span>
+        {item.target_mos_pct != null && (
+          <span className="flex-1 text-[11px] text-muted-foreground truncate font-mono">
+            ≥ {item.target_mos_pct}%
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="opacity-0 group-hover:opacity-100 h-6 w-6 rounded text-muted-foreground hover:text-destructive transition-opacity flex items-center justify-center"
+        aria-label={`Remove ${item.ticker} from watchlist`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
 function SavedThesesSection() {
   const { items, remove } = useSavedTheses();
   if (items.length === 0) return null;
@@ -249,6 +319,19 @@ export function Sidebar({
   const { entries } = useHistory();
   const groups = groupByDay(entries);
 
+  // Watchlist click re-runs analysis on that ticker (synthesizes a history submit).
+  const handleSelectTicker = (ticker: string) => {
+    // Reuse the submit handler inside AppShell by going through the same code
+    // path — we synthesize a fake HistoryEntry with no cache so it falls
+    // through to handleSubmitTicker.
+    onSelectHistory({
+      id: `watch-${ticker}-${Date.now()}`,
+      ticker,
+      timestamp: Date.now(),
+      status: "running",
+    });
+  };
+
   return (
     <aside
       className={cn(
@@ -312,9 +395,10 @@ export function Sidebar({
         )}
       </div>
 
-      {/* Scrollable middle: Saved Theses + History */}
+      {/* Scrollable middle: Watchlist + Saved Theses + History */}
       {!collapsed && (
         <div className="flex-1 overflow-y-auto scrollbar-thin px-2 pb-3">
+          <WatchlistSection onSelectTicker={handleSelectTicker} />
           <SavedThesesSection />
 
           {entries.length === 0 && (
