@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # Google OAuth
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
-    google_oauth_redirect_url: str = ""  # e.g. http://localhost:8000/api/auth/google/callback
+    google_oauth_redirect_url: str = ""  # e.g. http://localhost:3000/api/auth/google/callback
     finnhub_api_key: str = ""
     finnhub_base_url: str = "https://finnhub.io/api/v1"
 

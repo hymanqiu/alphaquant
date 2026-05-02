@@ -92,7 +92,7 @@ Open <http://localhost:3000>, type a ticker (e.g. `AAPL`), and watch the SSE str
 When configuring the OAuth client in Google Cloud Console:
 
 1. Application type: **Web application**
-2. Authorized redirect URIs: `http://localhost:8000/api/auth/google/callback` (dev) and your production callback
+2. Authorized redirect URIs: `http://localhost:3000/api/auth/google/callback` (dev — must match the frontend proxy origin so the `aq_oauth_state` cookie is delivered) and your production callback
 3. Scopes are requested at runtime (`openid email profile`); you do NOT need to enable "OAuth consent screen" for testing inside the same Google Workspace.
 
 ---
@@ -210,6 +210,37 @@ curl -X PATCH -H "Authorization: Bearer $TOKEN" \
   -d '{"llm_daily_budget_usd": 20.0}' \
   http://localhost:8000/api/admin/settings                          # raise to $20
 ```
+
+### Switching LLM provider at runtime (since v0.7.2)
+
+The same admin endpoint can change `llm_api_key` / `llm_base_url` /
+`llm_model` (and the narrative-tier counterparts) without restarting:
+
+```bash
+# Switch the whole stack from DeepSeek to OpenAI
+curl -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "llm_api_key": "sk-openai-xxx",
+    "llm_base_url": "https://api.openai.com/v1",
+    "llm_model": "gpt-4o-mini"
+  }' \
+  http://localhost:8000/api/admin/settings
+
+# Roll everything back to .env defaults
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/admin/settings/reset
+```
+
+The next request rebuilds the LLMClient singleton with the new config; the
+shared httpx connection pool is preserved. API keys are auto-redacted in
+all admin GET/PATCH responses (`***last4`). Bad URLs are rejected at PATCH
+time, not at request time. Use `llm_daily_budget_usd: 0` as a kill switch
+rather than blanking the api_key (since blanks fall back to env).
+
+> Multi-worker note: when running under `uvicorn --workers N`, the PATCH
+> only updates the worker that received it. Single-instance deployment is
+> the assumption today; Redis pub-sub broadcast is a follow-up.
 
 ---
 

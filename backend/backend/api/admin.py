@@ -18,9 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.services.auth import AuthError, AuthService
 from backend.services.db import get_session, is_db_configured
-from backend.services.llm import get_accounting_store
+from backend.services.llm import get_accounting_store, invalidate_llm_client
 from backend.services.rate_limit import get_rate_limiter
-from backend.services.runtime_settings import get_runtime_settings
+from backend.services.runtime_settings import (
+    LLM_PROVIDER_FIELDS,
+    REDACTED_FIELDS,
+    get_runtime_settings,
+    redact_overrides,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -45,22 +50,51 @@ def require_admin(
 
 
 class SettingsPatch(BaseModel):
-    """Body for PATCH /api/admin/settings. All fields optional."""
+    """Body for PATCH /api/admin/settings. All fields optional.
+
+    Fields fall into two groups:
+
+    - **Numeric guardrails** (budget caps, rate limits): take effect on the
+      next read.
+    - **LLM provider config**: a change to any of these triggers
+      ``invalidate_llm_client()`` so the cached LLMClient singleton is
+      rebuilt with the new config on the next request.
+
+    Empty string for an LLM field == "remove override; fall back to env".
+    To roll back ALL overrides at once, use ``POST /settings/reset``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    # Numeric guardrails
     llm_daily_budget_usd: float | None = None
     llm_per_ip_daily_budget_usd: float | None = None
     rate_limit_analyze_per_ip_day: int | None = None
     rate_limit_recalculate_per_ip_day: int | None = None
+
+    # LLM provider config (admin-overridable at runtime)
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_narrative_api_key: str | None = None
+    llm_narrative_base_url: str | None = None
+    llm_narrative_model: str | None = None
+
+
+def _redact_applied(applied: dict[str, Any]) -> dict[str, Any]:
+    """Mask secret values in the patch echo so logs/responses don't leak keys."""
+    return {
+        k: ("***" if k in REDACTED_FIELDS and v else v)
+        for k, v in applied.items()
+    }
 
 
 @router.get("/settings")
 def get_settings(_: None = Depends(require_admin)) -> dict[str, Any]:
     rt = get_runtime_settings()
     return {
-        "effective": rt.snapshot().as_dict(),
-        "overrides": rt.overrides(),
+        "effective": rt.snapshot().as_dict(redact=True),
+        "overrides": redact_overrides(rt.overrides()),
     }
 
 
@@ -76,13 +110,35 @@ def patch_settings(
         effective = get_runtime_settings().update(non_null)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"effective": effective.as_dict(), "applied": non_null}
+
+    # Provider config changed → drop the cached LLMClient so the next
+    # request rebuilds with the new config. httpx connection pool stays
+    # alive (it has no host affinity beyond DNS caching).
+    llm_changed = bool(non_null.keys() & LLM_PROVIDER_FIELDS)
+    if llm_changed:
+        invalidate_llm_client()
+
+    return {
+        "effective": effective.as_dict(redact=True),
+        "applied": _redact_applied(non_null),
+        "llm_client_invalidated": llm_changed,
+    }
 
 
 @router.post("/settings/reset")
 def reset_settings(_: None = Depends(require_admin)) -> dict[str, Any]:
-    effective = get_runtime_settings().reset()
-    return {"effective": effective.as_dict(), "overrides": {}}
+    rt = get_runtime_settings()
+    had_llm = rt.has_llm_overrides()
+    effective = rt.reset()
+    # If we just dropped any LLM override, the next request must observe the
+    # env-based config — invalidate the singleton.
+    if had_llm:
+        invalidate_llm_client()
+    return {
+        "effective": effective.as_dict(redact=True),
+        "overrides": {},
+        "llm_client_invalidated": had_llm,
+    }
 
 
 class TierPatch(BaseModel):

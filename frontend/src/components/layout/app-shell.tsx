@@ -251,6 +251,7 @@ export function AppShell({ initialTicker }: AppShellProps) {
       const resp = await fetch(`${API_BASE_URL}/api/recalculate-dcf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(data),
       });
       if (!resp.ok) return;
