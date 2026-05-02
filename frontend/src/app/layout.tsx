@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/context/auth-context";
 import { HistoryProvider } from "@/context/history-context";
+import { SavedThesisProvider } from "@/context/saved-thesis-context";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -31,7 +32,9 @@ export default function RootLayout({
     >
       <body className="h-full overflow-hidden">
         <AuthProvider>
-          <HistoryProvider>{children}</HistoryProvider>
+          <SavedThesisProvider>
+            <HistoryProvider>{children}</HistoryProvider>
+          </SavedThesisProvider>
         </AuthProvider>
       </body>
     </html>

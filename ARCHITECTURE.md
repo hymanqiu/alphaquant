@@ -1344,3 +1344,72 @@ showOverlay = showRail && overlayOpen
 ### 新增/修改文件
 
 参见 [CHANGELOG.md `v0.8.0`](CHANGELOG.md#v080--verdict-first-ui-重构phase-1) 的"前端变更"节。
+
+---
+
+## 16. Save Thesis + Share（v0.9.0）
+
+第一个粘性钩子：把 canvas 的当前状态钉成 snapshot，几周后回访可以看到关键字段如何漂移；同时 `/s/<uuid>` 可以把这份 snapshot 公开分享给非用户。
+
+### 数据模型
+
+```
+saved_theses
+├── id              uuid v4 (string)            非可遍历
+├── user_id         FK users.id (CASCADE)       owner
+├── ticker          string(8)                   AAPL / MSFT / ...
+├── title           string(200) | null          可选（v0.9 暂未暴露 UI）
+├── is_public       boolean (default true)      flip 即变私有
+├── hero_snapshot   JSONB                       HeroSnapshot 全部 12 字段
+├── components_snapshot JSONB                   ComponentInstruction[] 完整列表
+└── created_at      timestamptz
+```
+
+### API 表面
+
+| 端点 | 授权 | 行为 |
+|---|---|---|
+| `POST /api/saved-thesis` | required | body 含 `ticker / title? / is_public? / hero_snapshot / components_snapshot`；返回完整 payload |
+| `GET /api/saved-thesis` | required | 返回 `{items: [SavedThesisSummary]}`（不带 components） |
+| `GET /api/saved-thesis/{id}` | required | owner 才能读，否则 404 |
+| `DELETE /api/saved-thesis/{id}` | required | 204 |
+| `GET /api/share/thesis/{id}` | **none** | 仅 `is_public=true` 才返回，否则 404 |
+
+### Frontend 数据流
+
+```
+verdict-hero.tsx
+  └ useSavedTheses().items.find(t => t.ticker === current)
+     └ <SavedDiffStrip saved=. current=f /> 
+          (只在 status=='complete' && !isSnapshotView 时渲染)
+
+hero-actions.tsx (HeroActions → SaveButton)
+  └ useSavedTheses().save({ ticker, hero_snapshot: f, components_snapshot })
+  └ 已 saved 后切换为 [Saved][Share]，Share 复制 /s/<uuid>
+
+app/s/[id]/page.tsx
+  └ getPublicThesis(id) → SavedThesisFull
+  └ 渲染 <VerdictHero isSnapshotView /> + <CanvasTabs />
+```
+
+### Sidebar 二级段落
+
+```
+Sidebar
+├── New analysis (button)
+└── (scrollable middle)
+    ├── Saved theses                  ← v0.9
+    │   └── AAPL · BUY · 3w ago  [外链图标]  [X 悬停删除]
+    └── (history groups)
+        └── Today / Yesterday / This week / Earlier
+```
+
+点击 saved 行：仅 `is_public=true` 时新窗口打开 `/s/<id>`（私有 row 当前禁用导航；UI gap，待补）。
+
+### 关键决策
+
+- **UUID v4 主键** — share URL 非可遍历
+- **JSONB 而非规范化表** — 每次分析都是 immutable snapshot，规范化收益小
+- **`isSnapshotView` prop** — 防止跨用户跨时间无意义 diff（你访问别人的 AAPL share 时，"你自己的 saved AAPL" 不应被 diff）
+- **`is_public` 默认 true** — 保存的本意通常是分享，private 是少数
+- **乐观 UI** — save/remove 不等列表刷新；失败由 catch 兜底（v0.9 仅 console.warn，未来加 toast）

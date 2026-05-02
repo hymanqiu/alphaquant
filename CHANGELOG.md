@@ -6,6 +6,7 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
+| v0.9.0 | 2026-05-01 | feat | **Save Thesis + Share Link（Phase 2）**：新 `SavedThesis` ORM（UUID 主键 + JSONB hero/components 快照 + `is_public` 默认 true）+ `/api/saved-thesis` CRUD + 公开 `/api/share/thesis/{id}` 无授权读取。Hero 新增 [Save] / [Share] 按钮（Pro 启用），sidebar 加 "Saved theses" 段落，重访同一 ticker 时 Hero 下方显示 MoS / Confidence / Price / Signal 的差异条。`/s/[id]` 公开只读 canvas（隐藏 Save/Watch + 不显示 diff strip） |
 | v0.8.0 | 2026-05-01 | feat | **Verdict-First UI 重构（Phase 1）**：右侧 19 张卡片纵向堆叠 → sticky **Verdict Hero**（signal/MoS/confidence/risks/thesis/entry-exit 5 字段）+ **5 个 Tab**（Verdict / Valuation / Strategy / Risks & Moat / Sources）。`ConversationPanel` 在 `status==='complete'` 后自动折叠为 **56px rail**，点击展开 420px overlay。推理 trace 从 chat 移至 Sources tab。Tab 不自动切换，新卡片用脉冲点提示。 |
 | v0.7.1 | 2026-04-26 | docs | **文档体系重构（@Skyward666）**：ARCHITECTURE.md 拆分为三层文档体系（系统全景 + `docs/nodes/` 节点详情 + `docs/decisions/` 架构决策记录）。8 个核心节点文档全面重写（含 I/O 结构体定义 + NVDA 示例 + 失败模式）；5 个 ADR 记录关键架构决策。__注：本次新增的 v0.5/0.6/0.7 节点（qualitative_analysis / risk_yoy_diff / moat_analysis / investment_thesis）的 docs/nodes/ 文档将在 follow-up PR 中补齐__ |
 | v0.7.0 | 2026-04-25 | feat | **认证 + 订阅分级（Phase 2）**：邮箱/密码 + Magic Link + Google OAuth 三种登录方式；PostgreSQL 持久化；JWT 会话；4 个 Pro 节点按 user.tier 门控（free 用户看到锁定预览卡）；admin 可手动升级用户为 Pro。新增 `services/auth/` 模块、Alembic 迁移、AuthProvider Context、登录/注册页 |
@@ -15,6 +16,92 @@
 | v0.3.0 | 2026-04-21 | feat | 消息面情绪修正：Finnhub 新闻 + 内部人情绪 → 综合评分 → 安全边际调整。新增 Finnhub 客户端、DeepSeek LLM 情绪分析、sentiment_card 组件 |
 | v0.2.0 | 2026-04-17 | feat | 相对估值（市场乘数法）：当前乘数 + 历史百分位 + 同业对比。新增 FMP API 客户端、relative_valuation_card 组件 |
 | v0.1.0 | 2026-04-17 | — | 初始版本：SEC EDGAR 数据获取、财务健康扫描、DCF 估值建模、买入策略、数据溯源、SSE + Generative UI |
+
+---
+
+## v0.9.0 — Save Thesis + Share Link（Phase 2）
+
+**日期：** 2026-05-01
+
+### 概要
+
+让 Pro 用户把当前 canvas 的分析"钉住"成一份 snapshot，几周后回访可以看到关键字段如何漂移；同时提供公开 `/s/<uuid>` URL 给非用户分享。这是 Verdict-First 重构后第一个粘性钩子 — 一次性工具变成"我能记住当时怎么想"的工具。
+
+### 后端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/backend/services/saved_thesis.py` | `SavedThesis` ORM：UUID v4 字符串主键（避免遍历），`user_id` FK 含 ON DELETE CASCADE，`hero_snapshot` 与 `components_snapshot` 用 Postgres JSONB（hero 是摘要供 sidebar 廉价 diff，components 是 full ComponentInstruction[] 供 share 视图复原）。CRUD helpers `create_thesis` / `list_for_user` / `get_owned` / `get_public` / `delete_owned` |
+| `backend/backend/services/watchlist.py` | `WatchlistItem` ORM placeholder — schema 此处定义，code path 在 v0.10 启用。包含在 v0.9 是因为同一份 alembic 迁移建两张表 |
+| `backend/backend/api/saved_thesis.py` | 5 个端点：POST `/api/saved-thesis`（创建）/ GET（列表 mine）/ GET `/{id}`（读 mine）/ DELETE `/{id}`（删 mine）/ GET `/api/share/thesis/{id}`（公开只读，仅 `is_public=true` 才返回） |
+| `backend/alembic/versions/20260501_0002_saved_thesis_and_watchlist.py` | Alembic 迁移：建 `saved_theses` 和 `watchlist_items` 两张表（后者由 v0.10 使用） |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `backend/alembic/env.py` | 加 `SavedThesis` + `WatchlistItem` 模型导入（autogenerate 注册） |
+| `backend/backend/main.py` | 加 `saved_thesis_router` 注册 |
+
+### 数据库 schema
+
+```sql
+saved_theses (
+  id              VARCHAR(36) PRIMARY KEY,         -- UUID v4
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ticker          VARCHAR(8) NOT NULL,
+  title           VARCHAR(200),
+  is_public       BOOLEAN NOT NULL DEFAULT TRUE,
+  hero_snapshot   JSONB NOT NULL,                  -- HeroSnapshot 字段
+  components_snapshot JSONB NOT NULL,              -- ComponentInstruction[]
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+INDEX (user_id), INDEX (ticker)
+```
+
+### 前端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/lib/api-client.ts` | 通用 `apiRequest<T>(path, opts)` 包裹 fetch，标准化 FastAPI `{detail: ...}` 错误为 `ApiError` 抛出。`credentials: "include"` 透传 cookie auth |
+| `frontend/src/lib/saved-thesis-api.ts` | createSavedThesis / listSavedTheses / getSavedThesis / deleteSavedThesis / getPublicThesis |
+| `frontend/src/context/saved-thesis-context.tsx` | `SavedThesisProvider` 包 Auth 之下；`refresh` 在 status 变化时拉取，logout 时立即清；`save` 调 API 后乐观 prepend；`remove` 乐观 filter |
+| `frontend/src/components/canvas/hero-actions.tsx` | Hero 右侧的 [Save] / [Share] 按钮组。已 saved 时按钮变 [Saved][Share]，[Share] 复制 `/s/<uuid>` 到剪贴板（fallback 到 `window.prompt`）。匿名/Free 用户按钮 disabled 显示 "Sign in" tooltip |
+| `frontend/src/app/s/[id]/page.tsx` | 公开只读分享路由：调 `/api/share/thesis/{id}`，复用 `<VerdictHero isSnapshotView>` + `<CanvasTabs>`，顶部 banner 标识 "shared thesis · snapshot · {date}"，提供 "Run your own analysis" 引流 |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `frontend/src/lib/types.ts` | 新增 `HeroSnapshot` / `SavedThesisSummary` / `SavedThesisFull` 类型 |
+| `frontend/src/components/canvas/verdict-hero.tsx` | `deriveHero` 改为 `export`（share 路由也要派生），返回类型改用共享 `HeroSnapshot`。增加 `isSnapshotView` prop（true 时隐藏 actions + diff strip）；新增 `<HeroActions>` 整合 + 新内联 `SavedDiffStrip` 在重访已 saved 同一 ticker 时显示 MoS / Confidence / Price / Signal 4 项 delta（trend 颜色 + 涨跌图标）；`useState(() => Date.now())` lazy-init 以保持 render purity |
+| `frontend/src/components/layout/sidebar.tsx` | 在 History 上方插入 `<SavedThesesSection>`：列出用户所有 saved theses，行点击新窗口打开 `/s/<id>`（仅 `is_public=true`），右侧 hover 显示 X 删除按钮 |
+| `frontend/src/app/layout.tsx` | 把 `<HistoryProvider>` 包进 `<SavedThesisProvider>` 包进 `<AuthProvider>`，确保 saved thesis hooks 永远能拿到 auth context |
+
+### 设计决策
+
+- **UUID 主键 vs 整数自增**：share URLs 必须非可遍历（否则随机猜 id 就能 enumerate 别人的 thesis）。UUID v4 满足此要求，加 1 next-step 步骤可以加 confusion。
+- **`is_public` 默认 true**：保存的本意通常是分享或对比，private 是少数。用户如果隐私敏感可以未来加切换 UI。
+- **JSONB 存 components_snapshot 而非外键到 ComponentInstruction 表**：分析每次都重跑产生新 component 行，没必要规范化。JSONB 可以索引但目前不需要。
+- **`/api/share/thesis/{id}` 与 `/api/saved-thesis/{id}` 分开**：前者无授权但只返回 `is_public=true`；后者授权但返回 owner 的所有 saves（无论 is_public）。前端 `/s/[id]` 只走前者。
+- **乐观 UI**：save / remove 不等下一次 list 刷新，直接更新 context items。失败时回滚由 API 客户端的 ApiError throw 处理（hero-actions 内部 catch + console.warn）。
+- **`isSnapshotView` 的必要性**：未登录访客或访问别人的 share 时，diff strip 拿"我自己的 saved AAPL"对比"share 的 AAPL"，跨用户跨时间比较毫无意义，所以 share 路由传 `isSnapshotView` 抑制 diff strip 和 actions 渲染。
+
+### 拒绝的备选方案
+
+- ❌ **OG 图片 for share link**：next/og 渲染 hero strip 是病毒系数放大器，但 v0.9 不阻塞核心功能，留给后续。
+- ❌ **Owner-only viewer page** `/saved/[id]`：当 `is_public=false` 时 sidebar 链接走 `#` 不导航。当前所有 save 默认 public，gap 不显现；后续加私有切换 UI 时再补 owner-only viewer。
+- ❌ **Save 按钮在流式期间禁用**：用户可能想 save 部分分析做对比。current 行为允许保存任意 stage。`SavedDiffStrip` 在双方都有数据的字段才渲染 delta，缺字段静默跳过。
+
+### 验证
+
+- TS / lint 通过（与 v0.8 同标准）
+- 后端：`/api/saved-thesis`（无 auth）→ 401 ✓；`/api/share/thesis/<bad-uuid>` → 404 ✓
+- 已知限制（不阻塞 ship）：401 token 过期不强制 logout、 同 ticker 多次 save schema 允许但 UI 显示单份、Save 失败仅 console.warn
 
 ---
 

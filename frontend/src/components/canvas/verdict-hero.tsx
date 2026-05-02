@@ -1,48 +1,45 @@
 "use client";
 
-import { useMemo } from "react";
-import { ShieldAlert, ArrowRight } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ShieldAlert, ArrowRight, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ComponentInstruction, SSEStatus } from "@/lib/types";
+import { HeroActions } from "@/components/canvas/hero-actions";
+import { useSavedTheses } from "@/context/saved-thesis-context";
+import type {
+  ComponentInstruction,
+  HeroSnapshot,
+  SSEStatus,
+} from "@/lib/types";
 
 interface VerdictHeroProps {
   ticker: string;
   components: ComponentInstruction[];
   status: SSEStatus;
   onJumpToTab?: (tab: "risks") => void;
+  /** When true, hide live-analysis affordances (Save/Watch actions, diff
+   *  strip) — used on the read-only `/s/<id>` share view. */
+  isSnapshotView?: boolean;
 }
 
-type SignalKind = "buy" | "hold" | "reduce" | "sell";
+type SignalKind = HeroSnapshot["signalKind"];
 
-interface HeroFields {
-  entityName: string | null;
-  signalLabel: string | null;
-  signalKind: SignalKind | null;
-  marginOfSafety: number | null;
-  upside: number | null;
-  currentPrice: number | null;
-  intrinsicValue: number | null;
-  suggestedEntry: number | null;
-  confidence: number | null;
-  thesisHeadline: string | null;
-  highSeverityRiskCount: number;
-  totalRisksReported: boolean;
-}
+/** @deprecated kept for legacy doc reference; use HeroSnapshot from types */
+type HeroFields = HeroSnapshot;
 
-function recToKind(rec: string): SignalKind {
+function recToKind(rec: string): NonNullable<SignalKind> {
   if (rec === "Strong Buy" || rec === "Buy") return "buy";
   if (rec === "Hold") return "hold";
   if (rec === "Reduce") return "reduce";
   return "sell";
 }
 
-function strategyToKind(s: string): SignalKind {
+function strategyToKind(s: string): NonNullable<SignalKind> {
   if (s === "Deep Value" || s === "Undervalued") return "buy";
   if (s === "Fair Value") return "hold";
   return "sell";
 }
 
-function deriveHero(components: ComponentInstruction[]): HeroFields {
+export function deriveHero(components: ComponentInstruction[]): HeroFields {
   const fields: HeroFields = {
     entityName: null,
     signalLabel: null,
@@ -174,11 +171,28 @@ function HeroChip({
   );
 }
 
-export function VerdictHero({ ticker, components, status, onJumpToTab }: VerdictHeroProps) {
+export function VerdictHero({
+  ticker,
+  components,
+  status,
+  onJumpToTab,
+  isSnapshotView = false,
+}: VerdictHeroProps) {
   const f = useMemo(() => deriveHero(components), [components]);
   const isStreaming = status === "connecting" || status === "connected";
   const theme = signalTheme(f.signalKind);
   const conf = confidenceLabel(f.confidence);
+
+  // If the user has a saved thesis for this ticker, surface a compact diff
+  // strip so revisits show "you saved this 3w ago, here's how it's moved".
+  // Suppressed on snapshot views — the "current" is itself a saved snapshot
+  // and comparing to the viewer's own saved version is nonsensical.
+  const { items: savedTheses } = useSavedTheses();
+  const savedForTicker = useMemo(() => {
+    if (isSnapshotView) return null;
+    const upper = ticker.toUpperCase();
+    return savedTheses.find((t) => t.ticker === upper) ?? null;
+  }, [savedTheses, ticker, isSnapshotView]);
 
   const mosClass =
     f.marginOfSafety == null
@@ -194,18 +208,23 @@ export function VerdictHero({ ticker, components, status, onJumpToTab }: Verdict
   return (
     <div className="shrink-0 bg-background/85 backdrop-blur-md border-b">
       <div className="max-w-5xl mx-auto px-6 py-4 space-y-3">
-        {/* Top row: ticker + entity */}
-        <div className="flex items-baseline gap-2.5 min-w-0">
+        {/* Top row: ticker + entity + actions */}
+        <div className="flex items-center gap-2.5 min-w-0">
           <span className="font-mono font-bold text-[18px] tracking-tight">{ticker}</span>
           {f.entityName && (
             <span className="text-[12px] text-muted-foreground truncate">· {f.entityName}</span>
           )}
-          {f.currentPrice != null && (
-            <span className="ml-auto font-mono text-[13px] tabular-nums text-foreground/80">
-              {fmtPrice(f.currentPrice)}
-              <span className="text-[11px] text-muted-foreground ml-1">market</span>
-            </span>
-          )}
+          <div className="ml-auto flex items-center gap-3">
+            {f.currentPrice != null && (
+              <span className="font-mono text-[13px] tabular-nums text-foreground/80">
+                {fmtPrice(f.currentPrice)}
+                <span className="text-[11px] text-muted-foreground ml-1">market</span>
+              </span>
+            )}
+            {!isSnapshotView && (
+              <HeroActions ticker={ticker} hero={f} components={components} />
+            )}
+          </div>
         </div>
 
         {/* Stats row: signal · MoS · confidence · risks */}
@@ -337,7 +356,107 @@ export function VerdictHero({ ticker, components, status, onJumpToTab }: Verdict
             )}
           </div>
         )}
+
+        {/* Saved-thesis diff strip — shown only when a saved snapshot exists. */}
+        {savedForTicker && status === "complete" && (
+          <SavedDiffStrip
+            saved={savedForTicker.hero_snapshot}
+            savedAt={savedForTicker.created_at}
+            current={f}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+function formatSavedAge(savedAt: string | null, nowMs: number): string | null {
+  if (!savedAt) return null;
+  const ts = Date.parse(savedAt);
+  if (Number.isNaN(ts)) return null;
+  const days = Math.floor((nowMs - ts) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+function SavedDiffStrip({
+  saved,
+  savedAt,
+  current,
+}: {
+  saved: HeroSnapshot;
+  savedAt: string | null;
+  current: HeroSnapshot;
+}) {
+  // useState lazy-init reads Date.now() once on mount, keeping render pure.
+  const [nowMs] = useState<number>(() => Date.now());
+  const ageLabel = formatSavedAge(savedAt, nowMs);
+
+  const deltas: { label: string; from: string; to: string; trend: number }[] = [];
+  if (saved.marginOfSafety != null && current.marginOfSafety != null) {
+    const trend = current.marginOfSafety - saved.marginOfSafety;
+    deltas.push({
+      label: "MoS",
+      from: `${saved.marginOfSafety.toFixed(1)}%`,
+      to: `${current.marginOfSafety.toFixed(1)}%`,
+      trend,
+    });
+  }
+  if (saved.confidence != null && current.confidence != null) {
+    const trend = current.confidence - saved.confidence;
+    deltas.push({
+      label: "Conf",
+      from: `${Math.round(saved.confidence * 100)}%`,
+      to: `${Math.round(current.confidence * 100)}%`,
+      trend,
+    });
+  }
+  if (saved.currentPrice != null && current.currentPrice != null) {
+    const trend = current.currentPrice - saved.currentPrice;
+    deltas.push({
+      label: "Price",
+      from: `$${saved.currentPrice.toFixed(2)}`,
+      to: `$${current.currentPrice.toFixed(2)}`,
+      trend,
+    });
+  }
+  const signalChanged = saved.signalLabel !== current.signalLabel && saved.signalLabel && current.signalLabel;
+
+  if (!deltas.length && !signalChanged) return null;
+
+  return (
+    <div className="rounded-lg border bg-muted/40 px-3 py-2 flex items-center gap-3 flex-wrap text-[11.5px]">
+      <span className="text-muted-foreground inline-flex items-center gap-1">
+        <span>Saved</span>
+        {ageLabel && <span className="font-medium text-foreground/80">{ageLabel}</span>}
+        <span>·</span>
+      </span>
+      {deltas.map((d) => {
+        const Trend = d.trend >= 0 ? TrendingUp : TrendingDown;
+        const tone = d.trend >= 0
+          ? "text-emerald-600 dark:text-emerald-400"
+          : "text-red-600 dark:text-red-400";
+        return (
+          <span key={d.label} className="inline-flex items-center gap-1 font-mono tabular-nums">
+            <span className="text-muted-foreground">{d.label}:</span>
+            <span className="text-foreground/70">{d.from}</span>
+            <span className="text-muted-foreground">→</span>
+            <span className={cn("font-semibold", tone)}>{d.to}</span>
+            <Trend className={cn("h-2.5 w-2.5", tone)} />
+          </span>
+        );
+      })}
+      {signalChanged && (
+        <span className="inline-flex items-center gap-1 font-medium">
+          <span className="text-muted-foreground">Signal:</span>
+          <span className="text-foreground/70">{saved.signalLabel}</span>
+          <span className="text-muted-foreground">→</span>
+          <span className="text-foreground">{current.signalLabel}</span>
+        </span>
+      )}
     </div>
   );
 }
