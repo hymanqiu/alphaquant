@@ -88,8 +88,10 @@ def _set_session_cookie(response: Response, token: str) -> None:
         token,
         max_age=settings.jwt_access_ttl_seconds,
         httponly=True,
-        # ``secure`` is environment-dependent; set explicitly via setup later.
-        secure=False,
+        # ``secure`` is env-driven (AQ_COOKIE_SECURE). MUST be True in any
+        # HTTPS production deployment so the JWT can't travel in plaintext
+        # across an HTTP downgrade.
+        secure=settings.cookie_secure,
         samesite="lax",
         path="/",
     )
@@ -305,7 +307,7 @@ async def google_callback(
         jwt_token,
         max_age=settings.jwt_access_ttl_seconds,
         httponly=True,
-        secure=False,
+        secure=settings.cookie_secure,
         samesite="lax",
         path="/",
     )

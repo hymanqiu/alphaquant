@@ -20,7 +20,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.auth import User, get_current_user
@@ -52,13 +52,26 @@ def _require_db() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Hard bounds on snapshot size. The save flow is authenticated, but a
+# saved thesis can be re-served via the unauthenticated public share
+# endpoint, so we constrain payload size both as a storage DoS guard and
+# as an abuse-amplification guard. Real analyses currently emit ~12-18
+# components; ~20 hero fields. The limits here are well above realistic
+# cases but small enough that an attacker can't park MBs of JSON in the
+# table.
+_MAX_COMPONENT_INSTRUCTIONS = 30
+_MAX_HERO_KEYS = 20
+_MAX_COMPONENT_TYPE_LEN = 64
+_MAX_COMPONENT_ID_LEN = 64
+
+
 class _ComponentInstruction(BaseModel):
     """Mirror of the frontend ComponentInstruction shape."""
 
     model_config = ConfigDict(extra="allow")
-    component_type: str
+    component_type: str = Field(max_length=_MAX_COMPONENT_TYPE_LEN)
     props: dict[str, Any]
-    id: str
+    id: str = Field(max_length=_MAX_COMPONENT_ID_LEN)
 
 
 class SavedThesisCreateRequest(BaseModel):
@@ -67,7 +80,20 @@ class SavedThesisCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     is_public: bool = True
     hero_snapshot: dict[str, Any]
-    components_snapshot: list[_ComponentInstruction]
+    components_snapshot: list[_ComponentInstruction] = Field(
+        max_length=_MAX_COMPONENT_INSTRUCTIONS,
+    )
+
+    @field_validator("hero_snapshot")
+    @classmethod
+    def _check_hero_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(v, dict):
+            raise ValueError("hero_snapshot must be an object")
+        if len(v) > _MAX_HERO_KEYS:
+            raise ValueError(
+                f"hero_snapshot too large (max {_MAX_HERO_KEYS} keys, got {len(v)})"
+            )
+        return v
 
 
 def _public_payload(thesis: SavedThesis) -> dict[str, Any]:

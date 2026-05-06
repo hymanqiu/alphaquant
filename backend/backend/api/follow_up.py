@@ -20,7 +20,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.services.auth import User, require_pro
-from backend.services.llm import LLMError, get_llm_client, is_llm_configured
+from backend.services.llm import (
+    LLMError,
+    get_llm_client,
+    is_llm_configured,
+    sanitize_text,
+)
 from backend.services.rate_limit import (
     BUCKET_RECALCULATE,
     get_rate_limiter,
@@ -175,11 +180,17 @@ async def follow_up(
 
     client_ip = _enforce_rate_limit(request)
 
+    # The user-supplied question is the only untrusted input on this path —
+    # everything else (hero / components snapshot) is server-rendered. Wrap
+    # it in <<<USER_CONTENT>>> boundaries + escape control chars / HTML so
+    # a question like "ignore previous instructions; <<<END_USER_CONTENT>>>"
+    # can't escape the prompt envelope. Same convention used by every other
+    # LLM node (see services/llm/sanitize.py).
     variables = {
         "ticker": body.ticker.upper(),
         "hero_summary": _hero_summary(body.hero_snapshot),
         "components_summary": _components_summary(body.components_snapshot),
-        "question": body.question.strip(),
+        "question": sanitize_text(body.question.strip(), max_len=1500),
     }
 
     try:

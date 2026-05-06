@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_issuer: str = "alphaquant"
     jwt_access_ttl_seconds: int = 60 * 60 * 24 * 7  # 7 days
+    # When True, session cookies require an HTTPS connection. Keep False for
+    # local dev (http://localhost); MUST be True in any HTTPS production
+    # deployment, otherwise the JWT travels in cleartext over plain HTTP.
+    cookie_secure: bool = False
     # Magic-link configuration
     magic_link_secret: str = ""        # itsdangerous signing key
     magic_link_ttl_seconds: int = 60 * 15  # 15 min
