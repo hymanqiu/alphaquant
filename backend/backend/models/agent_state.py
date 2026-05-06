@@ -37,6 +37,8 @@ class AnalysisState(TypedDict):
     moat_result: dict[str, Any] | None
     # Investment thesis (LLM-synthesized narrative)
     investment_thesis_result: dict[str, Any] | None
+    # Technical Pulse (rule-based, no LLM) — 1Y price + indicators + signals + sentiment
+    pulse_result: dict[str, Any] | None
     # Source tracing
     source_map: dict[str, Any] | None
     # Reasoning chain (append-only via operator.add)

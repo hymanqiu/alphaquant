@@ -1,6 +1,6 @@
 """LangGraph value analyst workflow.
 
-Orchestrates: fetch_sec_data -> financial_health_scan -> dynamic_dcf -> relative_valuation -> event_sentiment -> event_impact -> strategy -> qualitative_analysis -> risk_yoy_diff -> moat_analysis -> investment_thesis -> logic_trace
+Orchestrates: fetch_sec_data -> financial_health_scan -> dynamic_dcf -> relative_valuation -> event_sentiment -> event_impact -> strategy -> technical_pulse -> qualitative_analysis -> risk_yoy_diff -> moat_analysis -> investment_thesis -> logic_trace
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from .nodes.qualitative_analysis import qualitative_analysis_node
 from .nodes.relative_valuation import relative_valuation_node
 from .nodes.risk_yoy_diff import risk_yoy_diff_node
 from .nodes.strategy import strategy_node
+from .nodes.technical_pulse import technical_pulse_node
 
 
 async def fetch_sec_data_node(
@@ -186,6 +187,7 @@ def build_value_analyst_graph() -> StateGraph:
     graph.add_node("event_sentiment", event_sentiment_node)
     graph.add_node("event_impact", event_impact_node)
     graph.add_node("strategy", strategy_node)
+    graph.add_node("technical_pulse", technical_pulse_node)
     graph.add_node("qualitative_analysis", qualitative_analysis_node)
     graph.add_node("risk_yoy_diff", risk_yoy_diff_node)
     graph.add_node("moat_analysis", moat_analysis_node)
@@ -203,7 +205,8 @@ def build_value_analyst_graph() -> StateGraph:
     graph.add_edge("relative_valuation", "event_sentiment")
     graph.add_edge("event_sentiment", "event_impact")
     graph.add_edge("event_impact", "strategy")
-    graph.add_edge("strategy", "qualitative_analysis")
+    graph.add_edge("strategy", "technical_pulse")
+    graph.add_edge("technical_pulse", "qualitative_analysis")
     graph.add_edge("qualitative_analysis", "risk_yoy_diff")
     graph.add_edge("risk_yoy_diff", "moat_analysis")
     graph.add_edge("moat_analysis", "investment_thesis")

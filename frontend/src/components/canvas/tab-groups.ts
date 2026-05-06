@@ -1,12 +1,19 @@
 import type { ComponentInstruction } from "@/lib/types";
 
-export type TabId = "verdict" | "valuation" | "strategy" | "risks" | "sources";
+export type TabId =
+  | "verdict"
+  | "valuation"
+  | "strategy"
+  | "risks"
+  | "pulse"
+  | "sources";
 
 export const TAB_ORDER: readonly TabId[] = [
   "verdict",
   "valuation",
   "strategy",
   "risks",
+  "pulse",
   "sources",
 ] as const;
 
@@ -15,6 +22,7 @@ export const TAB_LABELS: Record<TabId, string> = {
   valuation: "Valuation",
   strategy: "Strategy",
   risks: "Risks & Moat",
+  pulse: "Pulse",
   sources: "Sources",
 };
 
@@ -47,6 +55,14 @@ const TAB_BY_TYPE: Record<string, TabId> = {
   moat_analysis_card: "risks",
   moat_locked_card: "risks",
 
+  // Pulse — technical snapshot (rule-based, no LLM)
+  pulse_score_hero: "pulse",
+  price_chart_card: "pulse",
+  indicator_grid_card: "pulse",
+  signal_chips_card: "pulse",
+  market_context_card: "pulse",
+  sentiment_pulse_card: "pulse",
+
   // Sources
   source_table: "sources",
 };
@@ -63,6 +79,7 @@ export function groupByTab(components: ComponentInstruction[]): TabGroups {
     valuation: [],
     strategy: [],
     risks: [],
+    pulse: [],
     sources: [],
   };
   for (const c of components) {

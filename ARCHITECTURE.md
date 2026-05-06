@@ -127,7 +127,7 @@ alphaquant/
 ├── MVP-GAP.md                                   # MVP 差距分析与路线图
 │
 ├── docs/
-│   ├── nodes/                                   # 节点详细文档 (12 个)
+│   ├── nodes/                                   # 节点详细文档 (13 个)
 │   │   ├── 01-fetch-sec-data.md                 #   Node 1: SEC EDGAR 数据获取
 │   │   ├── 02-financial-health.md               #   Node 2: 财务健康扫描
 │   │   ├── 03-dcf-model.md                      #   Node 3: DCF 估值建模
@@ -139,8 +139,9 @@ alphaquant/
 │   │   ├── 09-qualitative-analysis.md           # 🆕 Node 9: 10-K MD&A + Risk Factors (Pro)
 │   │   ├── 10-risk-yoy-diff.md                  # 🆕 Node 10: 10-K Risk YoY 对比 (Pro)
 │   │   ├── 11-moat-analysis.md                  # 🆕 Node 11: 7 Powers 护城河评分 (Pro)
-│   │   └── 12-investment-thesis.md              # 🆕 Node 12: 综合投资论点 (Pro)
-│   └── decisions/                               # 架构决策记录 ADR (9 个)
+│   │   ├── 12-investment-thesis.md              # 🆕 Node 12: 综合投资论点 (Pro)
+│   │   └── 13-technical-pulse.md                # 🆕 Node 13: 技术 + 大盘 + 情绪 (Free, 0 LLM)
+│   └── decisions/                               # 架构决策记录 ADR (10 个)
 │       ├── 001-xbrl-tag-fallback.md             #   XBRL 标签回退策略
 │       ├── 002-two-stage-dcf.md                 #   两阶段 DCF 设计
 │       ├── 003-stream-writer-over-astream.md    #   StreamWriter 选择
@@ -149,7 +150,8 @@ alphaquant/
 │       ├── 006-unified-llm-client.md            # 🆕 LLM 单一调用入口
 │       ├── 007-three-layer-cost-guardrails.md   # 🆕 三层成本围栏
 │       ├── 008-pluggable-auth-providers.md      # 🆕 可插拔认证模块
-│       └── 009-tier-gating-strategy.md          # 🆕 节点级 tier 门控
+│       ├── 009-tier-gating-strategy.md          # 🆕 节点级 tier 门控
+│       └── 010-pulse-tab.md                     # 🆕 Pulse Tab：技术指标 + 大盘 + 情绪
 │
 ├── backend/                                     # 下方仅展示 v0.4 之前的核心结构;
 │   │                                            # v0.5/0.6/0.7 新增的 services/llm/, services/auth/,
@@ -831,12 +833,23 @@ npm run dev
 | 三 provider 模块化抽象（email/password + Magic link + Google OAuth） | [ADR 008: pluggable-auth-providers](decisions/008-pluggable-auth-providers.md) |
 | Pro 节点 tier 门控（节点入口 short-circuit + 锁定预览卡） | [ADR 009: tier-gating-strategy](decisions/009-tier-gating-strategy.md) |
 
-### 完整管线（12 节点）
+### Phase 4 — Pulse Tab：技术指标 + 大盘 + 情绪（v0.11.0）
+
+填补 Free / Pro 之间的产品差距：技术面 + 大盘 + 情绪面快照对所有用户开放，**0 LLM 调用**——纯规则计算，全局预算耗尽时仍可用。
+
+| 节点 | 输入 | 详细文档 |
+|------|------|---------|
+| `technical_pulse` | 1Y OHLCV (FMP) + SPY/VIX/10Y/DXY/sector ETF + Finnhub insider 90d + CNN F&G | [Node 13](nodes/13-technical-pulse.md) |
+
+11 条规则（8 bull + 3 bear）→ 加权 tanh 映射到 0-100 综合评分 → 5 档 signal label。详见 [ADR 010: Pulse Tab](decisions/010-pulse-tab.md)。
+
+### 完整管线（13 节点）
 
 ```
 fetch_sec_data → financial_health_scan → dynamic_dcf → relative_valuation
               → event_sentiment [LLM]  → event_impact [2× LLM]
               → strategy
+              → technical_pulse                       ← 13 个规则信号 + 评分（Free, 0 LLM）
               → qualitative_analysis [2× LLM, Pro]   ← MD&A + Risk Factors 并行
               → risk_yoy_diff        [LLM, Pro]      ← 双源核验
               → moat_analysis        [LLM, Pro]      ← 7 Powers
@@ -844,7 +857,7 @@ fetch_sec_data → financial_health_scan → dynamic_dcf → relative_valuation
               → logic_trace
 ```
 
-Free 用户跑 7 个 free 节点 + 4 个 Pro 节点 emit 锁定预览卡（0 LLM 调用）；Pro 用户跑全部 12 节点。
+Free 用户跑 8 个 free 节点 + 4 个 Pro 节点 emit 锁定预览卡（0 LLM 调用）；Pro 用户跑全部 13 节点。
 
 ### 完整目录结构（v0.7 后）
 
@@ -859,7 +872,7 @@ alpha/
 ├── MVP-GAP.md / MVP-GAP.html
 │
 ├── docs/
-│   ├── nodes/                       # 节点详细文档（12 个）
+│   ├── nodes/                       # 节点详细文档（13 个）
 │   │   ├── 01-fetch-sec-data.md
 │   │   ├── 02-financial-health.md
 │   │   ├── 03-dcf-model.md
@@ -871,7 +884,8 @@ alpha/
 │   │   ├── 09-qualitative-analysis.md   # 🆕 v0.6
 │   │   ├── 10-risk-yoy-diff.md          # 🆕 v0.6
 │   │   ├── 11-moat-analysis.md          # 🆕 v0.6
-│   │   └── 12-investment-thesis.md      # 🆕 v0.6
+│   │   ├── 12-investment-thesis.md      # 🆕 v0.6
+│   │   └── 13-technical-pulse.md        # 🆕 v0.11
 │   └── decisions/                   # ADR（架构决策记录）
 │       ├── 001-xbrl-tag-fallback.md
 │       ├── 002-two-stage-dcf.md
@@ -881,7 +895,8 @@ alpha/
 │       ├── 006-unified-llm-client.md           # 🆕 v0.5
 │       ├── 007-three-layer-cost-guardrails.md  # 🆕 v0.5
 │       ├── 008-pluggable-auth-providers.md     # 🆕 v0.7
-│       └── 009-tier-gating-strategy.md         # 🆕 v0.7
+│       ├── 009-tier-gating-strategy.md         # 🆕 v0.7
+│       └── 010-pulse-tab.md                    # 🆕 v0.11
 │
 ├── backend/
 │   ├── alembic.ini + alembic/                  # DB migrations (v0.7)
@@ -890,12 +905,13 @@ alpha/
 │       ├── main.py + config.py
 │       ├── api/{routes, admin, auth, dependencies}.py    # admin/auth 是 v0.5/v0.7 新增
 │       ├── agents/
-│       │   ├── value_analyst.py                          # 12 节点 graph
+│       │   ├── value_analyst.py                          # 13 节点 graph
 │       │   └── nodes/
 │       │       ├── (8 个原节点)
 │       │       ├── _pro_gate.py                          # 🆕 v0.7 tier 门控 helper
 │       │       ├── qualitative_analysis.py               # 🆕 v0.6
 │       │       ├── risk_yoy_diff.py                      # 🆕 v0.6
+│       │       ├── technical_pulse.py + _math.py         # 🆕 v0.11 (Free, 0 LLM)
 │       │       ├── moat_analysis.py                      # 🆕 v0.6
 │       │       └── investment_thesis.py                  # 🆕 v0.6
 │       ├── prompts/                                       # 🆕 v0.5 YAML library

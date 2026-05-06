@@ -169,7 +169,7 @@ The pattern is well-established. To add another, e.g. `dividend_safety_analysis`
 2. **Node** — `backend/backend/agents/nodes/dividend_safety.py` — define a Pydantic response model, write the async node function. Use `LLMClient.complete_json(prompt_name=..., response_model=...)` and `verify_quotes()` for any extracted quotes.
 3. **State** — add a new field to `AnalysisState` in `models/agent_state.py` and to the `initial_state` dict in `api/routes.py`.
 4. **Graph** — register in `agents/value_analyst.py` (add node + edge).
-5. **Frontend card** — `frontend/src/components/analysis/dividend-safety-card.tsx`. Register it in `component-registry.ts` keyed by the `component_type` your node emits.
+5. **Frontend card** — `frontend/src/components/analysis/dividend-safety-card.tsx`. Register it in **both** `component-registry.ts` (lazy import keyed by `component_type`) **and** `frontend/src/components/canvas/tab-groups.ts` (`TAB_BY_TYPE` mapping, decides which tab the card lives in). Skipping the tab-groups entry silently sends the card to the Sources tab fallback.
 6. **Pipeline step label** — add an entry in `frontend/src/hooks/use-analysis-stream.ts` so the UI displays a friendly progress label.
 7. **(Optional) Pro gate** — if the node should be Pro-only, import `_pro_gate.is_pro_user` and `emit_lock` and short-circuit at the top of the node. Register a `dividend_safety_locked_card` mapping to `pro-locked-card.tsx` in the registry.
 
