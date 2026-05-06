@@ -45,15 +45,33 @@ def _estimate_wacc(
     """
     cost_of_equity = risk_free_rate + beta * equity_risk_premium
 
-    # Negative/zero book equity → fall back to market cap for the equity weight
-    if equity is not None and equity <= 0 and market_cap and market_cap > 0:
-        equity = market_cap
+    # Choose what to use for the equity-side weight in WACC. When book equity
+    # is non-positive (heavy-buyback names like MCD whose retained-earnings
+    # column went negative) book equity is meaningless as a capital-structure
+    # proxy; fall back to market cap if available. We compute a separate
+    # variable so the original ``equity`` argument (book equity) is not
+    # mutated — readers downstream shouldn't have to remember which one this
+    # is.
+    equity_weight = equity
+    if (
+        equity_weight is not None
+        and equity_weight <= 0
+        and market_cap
+        and market_cap > 0
+    ):
+        equity_weight = market_cap
 
-    if debt and equity and equity > 0 and interest_expense and debt > 0:
+    if (
+        debt
+        and equity_weight
+        and equity_weight > 0
+        and interest_expense
+        and debt > 0
+    ):
         cost_of_debt = abs(interest_expense) / debt
-        total_capital = debt + equity
+        total_capital = debt + equity_weight
         wacc = (
-            (equity / total_capital) * cost_of_equity
+            (equity_weight / total_capital) * cost_of_equity
             + (debt / total_capital) * cost_of_debt * (1 - tax_rate)
         )
         return max(wacc, 0.04)  # floor at 4% (low for defensive low-beta names)
@@ -69,13 +87,22 @@ def compute_dcf(
     projection_years: int = 10,
     shares_outstanding: float | None = None,
     cash: float | None = None,
-    total_debt: float | None = None,
+    long_term_debt: float | None = None,
 ) -> dict[str, Any]:
     """Run the 2-stage DCF model.
 
-    If both ``cash`` and ``total_debt`` are provided, applies net debt
-    adjustment: per-share = (EV + cash − debt) / shares. Otherwise falls
-    back to EV / shares (legacy behavior, ignores capital structure).
+    If both ``cash`` and ``long_term_debt`` are provided, applies a partial
+    net-debt adjustment: per-share = (EV + cash − long_term_debt) / shares.
+    Otherwise falls back to EV / shares (legacy behavior, ignores capital
+    structure).
+
+    NOTE — this is **long-term** debt only, not full total debt. The current
+    SEC tag map exposes ``long_term_debt`` but does not yet aggregate
+    short-term borrowings, commercial paper, current portion of long-term
+    debt, or operating lease liabilities. For companies that lean heavily on
+    those, equity value is currently slightly overstated. A follow-up will
+    extend the SEC ingestion to a true total-debt field; until then the
+    parameter name reflects what we actually subtract.
     """
     projected_fcf: list[dict[str, Any]] = []
     high_growth_years = projection_years // 2
@@ -113,9 +140,10 @@ def compute_dcf(
     pv_fcf_sum = sum(p["present_value"] for p in projected_fcf)
     enterprise_value = pv_fcf_sum + terminal_pv
 
-    # Equity value with net debt adjustment when capital-structure data is available
-    if cash is not None and total_debt is not None:
-        equity_value = enterprise_value + cash - total_debt
+    # Equity value with partial net-debt adjustment when capital-structure
+    # data is available. ``long_term_debt`` only — see compute_dcf docstring.
+    if cash is not None and long_term_debt is not None:
+        equity_value = enterprise_value + cash - long_term_debt
     else:
         equity_value = enterprise_value  # legacy: no net debt adj
 
@@ -221,7 +249,12 @@ def _run_dcf(
     cash = financials.cash_and_equivalents[-1].value if financials.cash_and_equivalents else None
 
     profile = market_profile or {}
-    beta = profile.get("beta") or 1.2  # fallback to legacy default
+    # Fallback only when beta is genuinely missing — a real beta of exactly
+    # 0.0 (rare but possible for cash-equivalent ETFs / hedged instruments)
+    # should not silently get rewritten to 1.2.
+    beta = profile.get("beta")
+    if beta is None:
+        beta = 1.2
     market_cap = profile.get("market_cap")
 
     discount_rate = _estimate_wacc(
@@ -250,7 +283,7 @@ def _run_dcf(
         discount_rate=discount_rate,
         shares_outstanding=shares,
         cash=cash,
-        total_debt=debt,
+        long_term_debt=debt,
     )
 
     if dcf_result["intrinsic_value_per_share"]:

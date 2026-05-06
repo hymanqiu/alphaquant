@@ -303,7 +303,9 @@ async def _run_event_impact(
         else None
     )
 
-    recalculated_dcf = recalculate_dcf(adjusted_assumptions, shares, cash=cash, total_debt=debt)
+    recalculated_dcf = recalculate_dcf(
+        adjusted_assumptions, shares, cash=cash, long_term_debt=debt,
+    )
 
     reasoning.append(f"Impact analysis summary: {analysis_result['summary']}")
     reasoning.append(f"Confidence: {analysis_result['confidence']:.0%}")

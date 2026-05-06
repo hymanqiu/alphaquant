@@ -176,7 +176,7 @@ async def recalculate_dcf(
         discount_rate=payload.discount_rate / 100,
         shares_outstanding=shares,
         cash=cash,
-        total_debt=debt,
+        long_term_debt=debt,
     )
 
     # Include historical + projected FCF for chart update
