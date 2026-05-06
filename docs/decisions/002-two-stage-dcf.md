@@ -54,7 +54,7 @@ DCF 估值模型有多种阶段划分方式。核心问题是如何建模公司�
 | terminal_growth | 3.0% | 固定假设 (近似GDP增长) |
 | WACC floor | 4% | 防止不合理低价折现（原 6%，对低 beta 防御股偏高） |
 
-**净债务调整**: 自 2026-05 起，`per_share = (EV + cash − debt) / shares`，而非早期版本的 `EV / shares`。后者忽略资本结构，对 KO 这类高净债公司高估、对 GOOG 这类高净现金公司低估。
+**部分净债务调整**: 自 2026-05 起，`per_share = (EV + cash − long_term_debt) / shares`，而非早期版本的 `EV / shares`。后者忽略资本结构，对 KO 这类高净债公司高估、对 GOOG 这类高净现金公司低估。当前仅扣**长期债务** — 短期借款 / 商业票据 / 长债当期 / 经营租赁负债待 SEC tag map 升级后补齐为完整 total debt。
 
 **负权益兜底**: 若 `stockholders_equity ≤ 0`（重度回购公司如 MCD），且 `market_profile.market_cap` 可用，则用市值替代权益权重计算 WACC，避免 E/V 为负数导致的数学异常。
 
