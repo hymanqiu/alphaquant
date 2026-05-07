@@ -115,3 +115,69 @@ export interface DCFRecalculateResponse {
     type: "historical" | "projected";
   }>;
 }
+
+// ---------------------------------------------------------------------------
+// Saved theses (Phase 2)
+// ---------------------------------------------------------------------------
+
+/** Hero strip fields, snapshotted at save time for cheap sidebar diffing. */
+export interface HeroSnapshot {
+  signalLabel: string | null;
+  signalKind: "buy" | "hold" | "reduce" | "sell" | null;
+  marginOfSafety: number | null;
+  upside: number | null;
+  currentPrice: number | null;
+  intrinsicValue: number | null;
+  suggestedEntry: number | null;
+  confidence: number | null;
+  thesisHeadline: string | null;
+  highSeverityRiskCount: number;
+  totalRisksReported: boolean;
+  entityName: string | null;
+}
+
+export interface SavedThesisSummary {
+  id: string;
+  ticker: string;
+  title: string | null;
+  is_public: boolean;
+  created_at: string | null;
+  hero_snapshot: HeroSnapshot;
+}
+
+export interface SavedThesisFull extends SavedThesisSummary {
+  components_snapshot: ComponentInstruction[];
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist (Phase 3)
+// ---------------------------------------------------------------------------
+
+export interface WatchlistItem {
+  id: number;
+  ticker: string;
+  target_mos_pct: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  last_checked_at: string | null;
+  last_mos_pct: number | null;
+  last_signal: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up Q&A (Phase 3)
+// ---------------------------------------------------------------------------
+
+export type TabHint =
+  | "verdict"
+  | "valuation"
+  | "strategy"
+  | "risks"
+  | "sources"
+  | null;
+
+export interface FollowUpAnswer {
+  answer: string;
+  tab_hint: TabHint;
+  confidence: number;
+}

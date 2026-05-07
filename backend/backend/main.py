@@ -8,7 +8,10 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from backend.api.admin import router as admin_router
 from backend.api.auth import router as auth_router
+from backend.api.follow_up import router as follow_up_router
 from backend.api.routes import router
+from backend.api.saved_thesis import router as saved_thesis_router
+from backend.api.watchlist import router as watchlist_router
 from backend.config import settings
 from backend.services.db import close_engine, is_db_configured
 from backend.services.finnhub_client import finnhub_client
@@ -60,3 +63,6 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(admin_router)
 app.include_router(auth_router)
+app.include_router(saved_thesis_router)
+app.include_router(watchlist_router)
+app.include_router(follow_up_router)

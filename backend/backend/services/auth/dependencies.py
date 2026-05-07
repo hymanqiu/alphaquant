@@ -79,8 +79,13 @@ async def get_current_user(
 async def require_pro(
     user: User = Depends(get_current_user),
 ) -> User:
-    """Gate a route to Pro-tier users. 403 for free-tier."""
-    if user.tier != "pro":
+    """Gate a route to Pro-tier (or admin) users. 403 for free-tier.
+
+    Tier check matches ``_pro_gate.is_pro_user`` so a single source of truth
+    governs Pro-feature access across both the SSE pipeline and per-route
+    dependencies. Admins are implicitly Pro.
+    """
+    if user.tier not in {"pro", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={

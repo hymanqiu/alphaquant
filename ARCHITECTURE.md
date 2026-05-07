@@ -942,3 +942,270 @@ alpha/
 ```
 
 > **注**: 未设置 `AQ_FMP_API_KEY` 时, 相对估值和策略分析自动跳过。未设置 `AQ_FINNHUB_API_KEY` 时, 消息面情绪节点自动跳过。未设置 `AQ_LLM_API_KEY` 时, 所有 LLM 节点（含 5 个 Pro 节点）跳过。未设置 `AQ_DATABASE_URL` 时, auth 整套禁用，所有用户被视为 anonymous（free tier）。在 `.env` 中按需启用即可。
+
+---
+
+## 15. UI Phase 1 — Verdict-First 重构（v0.8.0）
+
+原右侧 canvas 把 19 张卡片纵向堆叠在 4000-6000px 长的列里。本次重构把它替换为：
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Verdict Hero (sticky)                                │
+│  AAPL · Apple Inc.            $189.50 market         │
+│  [BUY pill] [+18% MoS] [72% High conf] [3 high ⚠]   │
+│  "20% discount to intrinsic; services growth slows"  │
+│  Buy < $185 · IV $215 · Upside +14%                  │
+├─────────────────────────────────────────────────────┤
+│ [Verdict 5][Valuation 8 ●][Strategy 2][Risks 3⚠][Sources 1] │
+├─────────────────────────────────────────────────────┤
+│  <当前 tab 的卡片，内部独立滚动>                          │
+└─────────────────────────────────────────────────────┘
+```
+
+### 信息架构
+
+| Tab | 包含组件 | 角色 |
+|---|---|---|
+| Verdict | `investment_thesis_card` (+ pro-locked) · `qualitative_insights_card` (+ pro-locked) · `strategy_dashboard` | 答案 + 推荐 + 入场区间 |
+| Valuation | `dcf_result_card` · `valuation_gauge` · `assumption_slider` · `fcf_chart` · `revenue_chart` · `relative_valuation_card` · `metric_table` · `financial_health_card` | 估值数字（最重 tab） |
+| Strategy | `sentiment_card` · `event_impact_card` | 时机 / 催化剂 / 情绪 |
+| Risks & Moat | `risk_factors_card` · `risk_yoy_diff_card` (+ pro-locked) · `moat_analysis_card` (+ pro-locked) | 风险与护城河 |
+| Sources | `source_table` + 推理 trace（per-node accordion） | 透明度 / 较真用户 |
+
+映射在 `frontend/src/components/canvas/tab-groups.ts` 单一来源。新分析卡只需在该文件加映射即可。
+
+### Hero 字段派生（无重算）
+
+`deriveHero(components)` 从已经在 canvas 上的 `ComponentInstruction[]` 派生 12 字段：
+
+- `signalLabel` / `signalKind`: 优先 `investment_thesis_card.recommendation`（Strong Buy/Buy/Hold/Reduce/Sell），fallback `strategy_dashboard.signal`（Deep Value/Undervalued/Fair Value/Overvalued）— Free 用户无 thesis card 时仍能显示信号
+- `marginOfSafety` / `upside` / `currentPrice` / `intrinsicValue` / `suggestedEntry`: `strategy_dashboard`
+- `confidence` / `thesisHeadline`: `investment_thesis_card`
+- `highSeverityRiskCount` / `totalRisksReported`: `risk_factors_card.top_risks` 中 `severity == "high"` 计数
+
+Hero 直接读 props，不重计算。Tab 内卡片显示完整数据；hero 是"电梯演讲"摘要。
+
+### Conversation panel 状态机
+
+```
+idle ──submit──▶ streaming（420px 满展开，进度+推理可见）
+                    │
+              status===complete
+                    ▼
+           collapsed（56px 轨：avatar + Ask icon）
+                    │
+              user click rail
+                    ▼
+            expanded as overlay（不挤压 canvas，420px 浮层）
+                    │
+              点遮罩 / 点 X
+                    ▼
+                  rail
+```
+
+派生态实现（不用 setState-in-effect）：
+```
+isStreaming = displayStatus === "connecting" || "connected"
+showRail    = !isStreaming && ticker !== null
+showOverlay = showRail && overlayOpen
+```
+
+`overlayOpen` 是唯一用户驱动的标志，由 rail 点击 + 遮罩点击驱动；其余由 displayStatus 派生。
+
+### 流式 UX 细节
+
+- **Tabs 不自动切换** — 抢焦点是反 UX。新卡片到达非活动 tab 时，tab 标题脉冲红点；用户主动点击。
+- **Hero 渐入** — signal 先到、MoS 次到、thesis 最后；3 秒就能看到答案在成型。
+- **Risks 块** — `highSeverityRiskCount > 0` 时变红，可点跳 Risks tab。
+- **CanvasTabs `seenCounts` lazy-init** — 全 tab 用挂载时 group counts 初始化，pulse-dot 仅对**之后**到达的卡片触发；缓存视图（一次性全部到位）不显示假新卡提示。
+- **`<AnalysisCanvas key={activeEntryId}>`** — 历史切换时 `seenCounts` / `activeTab` 等内部状态干净重置。
+
+### 新增/修改文件
+
+参见 [CHANGELOG.md `v0.8.0`](CHANGELOG.md#v080--verdict-first-ui-重构phase-1) 的"前端变更"节。
+
+---
+
+## 16. Save Thesis + Share（v0.9.0）
+
+第一个粘性钩子：把 canvas 的当前状态钉成 snapshot，几周后回访可以看到关键字段如何漂移；同时 `/s/<uuid>` 可以把这份 snapshot 公开分享给非用户。
+
+### 数据模型
+
+```
+saved_theses
+├── id              uuid v4 (string)            非可遍历
+├── user_id         FK users.id (CASCADE)       owner
+├── ticker          string(8)                   AAPL / MSFT / ...
+├── title           string(200) | null          可选（v0.9 暂未暴露 UI）
+├── is_public       boolean (default true)      flip 即变私有
+├── hero_snapshot   JSONB                       HeroSnapshot 全部 12 字段
+├── components_snapshot JSONB                   ComponentInstruction[] 完整列表
+└── created_at      timestamptz
+```
+
+### API 表面
+
+| 端点 | 授权 | 行为 |
+|---|---|---|
+| `POST /api/saved-thesis` | required | body 含 `ticker / title? / is_public? / hero_snapshot / components_snapshot`；返回完整 payload |
+| `GET /api/saved-thesis` | required | 返回 `{items: [SavedThesisSummary]}`（不带 components） |
+| `GET /api/saved-thesis/{id}` | required | owner 才能读，否则 404 |
+| `DELETE /api/saved-thesis/{id}` | required | 204 |
+| `GET /api/share/thesis/{id}` | **none** | 仅 `is_public=true` 才返回，否则 404 |
+
+### Frontend 数据流
+
+```
+verdict-hero.tsx
+  └ useSavedTheses().items.find(t => t.ticker === current)
+     └ <SavedDiffStrip saved=. current=f /> 
+          (只在 status=='complete' && !isSnapshotView 时渲染)
+
+hero-actions.tsx (HeroActions → SaveButton)
+  └ useSavedTheses().save({ ticker, hero_snapshot: f, components_snapshot })
+  └ 已 saved 后切换为 [Saved][Share]，Share 复制 /s/<uuid>
+
+app/s/[id]/page.tsx
+  └ getPublicThesis(id) → SavedThesisFull
+  └ 渲染 <VerdictHero isSnapshotView /> + <CanvasTabs />
+```
+
+### Sidebar 二级段落
+
+```
+Sidebar
+├── New analysis (button)
+└── (scrollable middle)
+    ├── Saved theses                  ← v0.9
+    │   └── AAPL · BUY · 3w ago  [外链图标]  [X 悬停删除]
+    └── (history groups)
+        └── Today / Yesterday / This week / Earlier
+```
+
+点击 saved 行：仅 `is_public=true` 时新窗口打开 `/s/<id>`（私有 row 当前禁用导航；UI gap，待补）。
+
+### 关键决策
+
+- **UUID v4 主键** — share URL 非可遍历
+- **JSONB 而非规范化表** — 每次分析都是 immutable snapshot，规范化收益小
+- **`isSnapshotView` prop** — 防止跨用户跨时间无意义 diff（你访问别人的 AAPL share 时，"你自己的 saved AAPL" 不应被 diff）
+- **`is_public` 默认 true** — 保存的本意通常是分享，private 是少数
+- **乐观 UI** — save/remove 不等列表刷新；失败由 catch 兜底（v0.9 仅 console.warn，未来加 toast）
+
+---
+
+## 17. Watchlist + Follow-up Q&A（v0.10.0）
+
+留存层闭环 + Pro 用户的对话式深挖入口。
+
+### Watchlist 数据模型
+
+```
+watchlist_items
+├── id              integer (auto)
+├── user_id         FK users.id (CASCADE)
+├── ticker          string(8)
+├── target_mos_pct  float | null            "MoS ≥ X% 时告警"
+├── created_at, updated_at, last_checked_at timestamptz
+├── last_mos_pct, last_signal               cron 写回字段（v0.10 占位）
+└── UNIQUE (user_id, ticker)
+```
+
+> 表在 v0.9 迁移中已创建；本版本启用 CRUD endpoint + UI。
+
+### API 表面
+
+| 端点 | 授权 | 行为 |
+|---|---|---|
+| `GET /api/watchlist` | required | 返回 `{items: [WatchlistItem]}` |
+| `PUT /api/watchlist/{ticker}` | required | upsert（按 user_id+ticker 唯一）；`target_mos_pct` 验证 `[-100, 100]` |
+| `DELETE /api/watchlist/{ticker}` | required | 204 |
+| `POST /api/follow-up` | **require_pro** | body `{ticker, question, hero_snapshot?, components_snapshot[]}` → `{answer, tab_hint, confidence}` |
+
+### Follow-up Q&A 流程
+
+```
+用户在 overlay conversation 输入问题
+   ↓
+askFollowUp() POST /api/follow-up
+   ↓
+backend:
+   1. require_pro gate（401/403）
+   2. BUCKET_RECALCULATE rate limit（30/day per IP，与 DCF recalc 共池）
+   3. bind_client_ip → 计费归属用户
+   4. _hero_summary + _components_summary 拼 prompt 变量（components 截 12 张）
+   5. complete_json("follow_up", v=1, FollowUpAnswer)
+   6. 返回 {answer, tab_hint, confidence}
+   ↓
+frontend:
+   thread.push({state: ok, answer})
+   tab_hint 严格 5 选 1 验证 → "See Valuation tab →" 可点击
+```
+
+### Prompt 模板（`follow_up_v1.yaml`）
+
+- temperature 0.4 / max_tokens 1200
+- System prompt 边界：
+  - 仅基于 payload 内容回答，不臆造数据
+  - what-if 类问题做方向性推理而非编造精确数字
+  - 1-3 短段落，无 heading
+  - `<<<USER_CONTENT>>>` / `<<<END_USER_CONTENT>>>` 标记 + DATA-only 反注入
+  - JSON schema 强约束 `tab_hint ∈ verdict|valuation|strategy|risks|sources|null`
+
+### 状态提升：activeTab from AnalysisCanvas → AppShell
+
+```
+AppShell
+├── overlayOpen: boolean         （rail vs overlay panel）
+├── activeTab: TabId             ← v0.10 lift up
+├── handleJumpToTab(t)           setActiveTab(t) + setOverlayOpen(false)
+│
+├── <ConversationPanel components onJumpToTab={handleJumpToTab} />
+│       └── <FollowUpSection key={ticker} ...>
+│              └── tab_hint button → calls onJumpToTab(validTab)
+│
+└── <AnalysisCanvas activeTab onTabChange />
+       └── <VerdictHero onJumpToTab={onTabChange} />（risks badge）
+       └── <CanvasTabs activeTab onTabChange />
+```
+
+`activeTab` 提升使两个独立组件树（conversation overlay、canvas）能互相切 tab。
+
+### 竞态修复：AbortController 在 saved-thesis + watchlist contexts
+
+```
+const inflightRef = useRef<AbortController | null>(null);
+
+const refresh = useCallback(async () => {
+  inflightRef.current?.abort();             // 1. cancel prev
+  if (status !== "authenticated") {
+    setItems([]); return;                    // logout 立即清空
+  }
+  const c = new AbortController();
+  inflightRef.current = c;
+  try {
+    const fresh = await listX(c.signal);
+    if (!c.signal.aborted) setItems(fresh);  // 2. post-await aborted check
+  } catch { /* AbortError or network */ }
+  finally {
+    if (inflightRef.current === c) {         // 3. 不污染更新 controller
+      inflightRef.current = null;
+      setLoading(false);
+    }
+  }
+}, [status]);
+
+useEffect(() => () => inflightRef.current?.abort(), []);  // unmount cleanup
+```
+
+防止 logout 时 prev auth'd fetch 的 200 响应在 logout 后回来 setItems(authData) 覆盖 setItems([])。
+
+### 关键决策
+
+- **Pro gate on `/api/follow-up`** — 与 Pro LLM 节点等级一致；free 用户得 403 friendly upgrade message
+- **Watchlist 点击 = 重分析** — 用户点 sidebar ticker 想看最新数据，不是查看 watchlist 历史
+- **FollowUpSection `key={ticker}`** — ticker 切换时 thread / input state 干净重置
+- **`hasPending` 阻塞双提交** — `idx = thread.length` 闭包+连按 Enter 会让两个 setState 落到同一 thread 槽
+- **客户端 [-100, 100] 验证** — 后端 422 静默吞会让用户以为已加 watch，前端范围检查 + 红框 + disable 提交避免

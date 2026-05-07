@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { ConversationPanel } from "@/components/conversation-panel";
 import { AnalysisCanvas } from "@/components/analysis-canvas";
 import { EmptyState } from "@/components/empty-state";
+import type { TabId } from "@/components/canvas/tab-groups";
 import { useAnalysisStream } from "@/hooks/use-analysis-stream";
 import { useHistory } from "@/context/history-context";
 import { API_BASE_URL } from "@/lib/constants";
@@ -35,34 +36,36 @@ export function AppShell({ initialTicker }: AppShellProps) {
   const [ticker, setTicker] = useState<string | null>(
     initialTicker?.toUpperCase() ?? null
   );
-  // isLive = true means a new SSE analysis is running; false = viewing cache or idle
   const [isLive, setIsLive] = useState(!!initialTicker);
 
-  // SSE connection — only active when isLive && ticker is set
   const liveTicker = isLive ? ticker : null;
   const stream = useAnalysisStream(liveTicker);
 
-  // --- Fix 1: In-memory cache for completed analyses ---
   const cacheRef = useRef(new Map<string, CachedAnalysis>());
   const [cachedView, setCachedView] = useState<CachedAnalysis | null>(null);
 
-  // --- Fix 2: Raw recalc result, applied via useMemo (no stale closure) ---
-  const [recalcResult, setRecalcResult] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
+  const [recalcResult, setRecalcResult] = useState<Record<string, unknown> | null>(null);
 
-  // History tracking
   const { addEntry, updateEntry } = useHistory();
   const entryIdRef = useRef<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
 
-  // Sidebar collapse
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // --- Fix 3: statusRef so callbacks always see current status ---
+  // Conversation-panel layout is derived from displayStatus + this user-driven flag:
+  //   streaming  → "expanded" (full panel)
+  //   complete   → "rail"     (56px collapsed)
+  //   complete + overlayOpen → rail + floating overlay panel
+  const [overlayOpen, setOverlayOpen] = useState(false);
+
+  // activeTab lives here so the conversation panel's Follow-up Q&A
+  // tab_hint can switch the canvas tab from inside the overlay.
+  const [activeTab, setActiveTab] = useState<TabId>("verdict");
+
   const statusRef = useRef(stream.status);
-  statusRef.current = stream.status;
+  useEffect(() => {
+    statusRef.current = stream.status;
+  }, [stream.status]);
 
   // ── Derived display values (live vs cached) ──
 
@@ -76,13 +79,9 @@ export function AppShell({ initialTicker }: AppShellProps) {
     ? stream.thinkingMessages
     : cachedView?.thinkingMessages ?? EMPTY_MESSAGES;
 
-  const displaySteps = isLive
-    ? stream.steps
-    : cachedView?.steps ?? EMPTY_STEPS;
+  const displaySteps = isLive ? stream.steps : cachedView?.steps ?? EMPTY_STEPS;
 
-  const displayVerdict = isLive
-    ? stream.verdict
-    : cachedView?.verdict ?? null;
+  const displayVerdict = isLive ? stream.verdict : cachedView?.verdict ?? null;
 
   const displayError = isLive ? stream.error : null;
 
@@ -90,7 +89,6 @@ export function AppShell({ initialTicker }: AppShellProps) {
     ? stream.components
     : cachedView?.components ?? EMPTY_COMPONENTS;
 
-  // Fix 2: Apply recalc overrides via useMemo — always on top of latest baseComponents
   const displayComponents = useMemo(() => {
     if (!recalcResult) return baseComponents;
 
@@ -101,8 +99,7 @@ export function AppShell({ initialTicker }: AppShellProps) {
             ...comp,
             props: {
               ...comp.props,
-              intrinsic_value_per_share:
-                recalcResult.intrinsic_value_per_share,
+              intrinsic_value_per_share: recalcResult.intrinsic_value_per_share,
               enterprise_value: recalcResult.enterprise_value,
               terminal_value: recalcResult.terminal_value,
               pv_fcf_sum: recalcResult.pv_fcf_sum,
@@ -118,10 +115,7 @@ export function AppShell({ initialTicker }: AppShellProps) {
             },
           };
         case "fcf_chart":
-          return {
-            ...comp,
-            props: { ...comp.props, data: recalcResult.chart_data },
-          };
+          return { ...comp, props: { ...comp.props, data: recalcResult.chart_data } };
         case "strategy_dashboard": {
           const iv = recalcResult.intrinsic_value_per_share as number | null;
           if (iv == null || iv <= 0) return comp;
@@ -154,16 +148,15 @@ export function AppShell({ initialTicker }: AppShellProps) {
 
   // ── History entry lifecycle ──
 
-  // Create history entry when live analysis starts connecting
   useEffect(() => {
     if (isLive && ticker && stream.status === "connecting" && !entryIdRef.current) {
       const id = addEntry(ticker);
       entryIdRef.current = id;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- side effect: addEntry mints an id we then expose via state
       setActiveEntryId(id);
     }
   }, [isLive, ticker, stream.status, addEntry]);
 
-  // Update history entry + cache result when live analysis completes or errors
   useEffect(() => {
     if (!entryIdRef.current || !isLive) return;
     if (stream.status === "complete") {
@@ -171,7 +164,6 @@ export function AppShell({ initialTicker }: AppShellProps) {
         status: "complete",
         verdict: stream.verdict ?? undefined,
       });
-      // Cache the completed result
       cacheRef.current.set(entryIdRef.current, {
         thinkingMessages: stream.thinkingMessages,
         components: stream.components,
@@ -191,7 +183,6 @@ export function AppShell({ initialTicker }: AppShellProps) {
     updateEntry,
   ]);
 
-  // Fix 3: Clean up a previous entry that's still "running" before switching
   const cleanupPrevious = useCallback(() => {
     if (
       entryIdRef.current &&
@@ -203,7 +194,6 @@ export function AppShell({ initialTicker }: AppShellProps) {
 
   // ── User actions ──
 
-  // Start a brand-new live analysis (from input bar or re-analyze)
   const handleSubmitTicker = useCallback(
     (t: string) => {
       cleanupPrevious();
@@ -213,16 +203,16 @@ export function AppShell({ initialTicker }: AppShellProps) {
       setRecalcResult(null);
       entryIdRef.current = null;
       setActiveEntryId(null);
+      setOverlayOpen(false);
+      setActiveTab("verdict");
     },
     [cleanupPrevious]
   );
 
-  // Fix 1: Click a sidebar history entry — restore from cache if available
   const handleSelectHistory = useCallback(
     (entry: HistoryEntry) => {
       const cached = cacheRef.current.get(entry.id);
       if (cached && entry.status === "complete") {
-        // Restore cached result without SSE
         cleanupPrevious();
         setTicker(entry.ticker);
         setIsLive(false);
@@ -230,15 +220,15 @@ export function AppShell({ initialTicker }: AppShellProps) {
         setRecalcResult(null);
         entryIdRef.current = entry.id;
         setActiveEntryId(entry.id);
+        setOverlayOpen(false);
+        setActiveTab("verdict");
       } else {
-        // No cache — re-analyze
         handleSubmitTicker(entry.ticker);
       }
     },
     [cleanupPrevious, handleSubmitTicker]
   );
 
-  // Reset to empty state
   const handleNewAnalysis = useCallback(() => {
     cleanupPrevious();
     setTicker(null);
@@ -247,25 +237,45 @@ export function AppShell({ initialTicker }: AppShellProps) {
     setRecalcResult(null);
     entryIdRef.current = null;
     setActiveEntryId(null);
+    setOverlayOpen(false);
+    setActiveTab("verdict");
   }, [cleanupPrevious]);
 
-  // Fix 2: Recalculate handler — no dependencies on components (no stale closure)
-  const handleRecalculate = useCallback(
-    async (data: Record<string, unknown>) => {
-      try {
-        const resp = await fetch(`${API_BASE_URL}/api/recalculate-dcf`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-        if (!resp.ok) return;
-        setRecalcResult(await resp.json());
-      } catch {
-        // Silently fail — original components remain
-      }
-    },
-    []
-  );
+  const handleJumpToTab = useCallback((t: TabId) => {
+    setActiveTab(t);
+    setOverlayOpen(false);
+  }, []);
+
+  const handleRecalculate = useCallback(async (data: Record<string, unknown>) => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/api/recalculate-dcf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!resp.ok) return;
+      setRecalcResult(await resp.json());
+    } catch {
+      // Silently fail — original components remain
+    }
+  }, []);
+
+  const isStreaming = displayStatus === "connecting" || displayStatus === "connected";
+  const showRail = !isStreaming && ticker !== null;
+  const showOverlay = showRail && overlayOpen;
+
+  const panelCommonProps = {
+    ticker,
+    status: displayStatus,
+    steps: displaySteps,
+    thinkingMessages: displayThinkingMessages,
+    verdict: displayVerdict,
+    error: displayError,
+    onSubmitTicker: handleSubmitTicker,
+    components: displayComponents,
+    onJumpToTab: handleJumpToTab,
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -276,25 +286,48 @@ export function AppShell({ initialTicker }: AppShellProps) {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
       />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
         {ticker === null ? (
           <EmptyState onSubmit={handleSubmitTicker} />
         ) : (
           <>
+            {/* Inline panel slot: full when streaming, rail when collapsed/overlay */}
             <ConversationPanel
-              ticker={ticker}
-              status={displayStatus}
-              steps={displaySteps}
-              thinkingMessages={displayThinkingMessages}
-              verdict={displayVerdict}
-              error={displayError}
-              onSubmitTicker={handleSubmitTicker}
+              {...panelCommonProps}
+              collapsed={showRail}
+              onExpand={() => setOverlayOpen(true)}
             />
+
+            {/* Overlay panel — floats next to the rail without pushing the canvas */}
+            {showOverlay && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Close conversation overlay"
+                  className="absolute inset-0 z-10 bg-black/15 dark:bg-black/40 animate-in fade-in duration-150"
+                  onClick={() => setOverlayOpen(false)}
+                />
+                <div className="absolute left-[56px] top-0 bottom-0 w-[420px] z-20 animate-in slide-in-from-left-3 fade-in duration-200">
+                  <ConversationPanel
+                    {...panelCommonProps}
+                    collapsed={false}
+                    showCloseButton
+                    onClose={() => setOverlayOpen(false)}
+                  />
+                </div>
+              </>
+            )}
+
             <AnalysisCanvas
+              key={activeEntryId ?? `idle-${ticker}`}
               ticker={ticker}
               components={displayComponents}
+              thinkingMessages={displayThinkingMessages}
+              steps={displaySteps}
               onRecalculate={handleRecalculate}
               status={displayStatus}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
             />
           </>
         )}

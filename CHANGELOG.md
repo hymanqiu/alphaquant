@@ -6,6 +6,9 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
+| v0.10.0 | 2026-05-01 | feat | **Watchlist + Follow-up Q&A（Phase 3）**：新 `WatchlistItem` ORM（user_id+ticker 唯一约束，`target_mos_pct` 阈值占位）+ `/api/watchlist` CRUD（cron 告警留待后续）。Hero 加 [Watch] 按钮 + 阈值对话框（[-100, 100] 客户端验证）；sidebar 加 "Watching" 段落，点击 ticker 触发重分析。新 `/api/follow-up` 端点（Pro 必需）+ `follow_up_v1.yaml` prompt：基于当前 hero+canvas 的上下文回答 Q&A，复用现有 LLM 客户端 + 预算守护 + 计费。`<FollowUpSection>` 嵌入对话面板 overlay，threaded Q&A，pending 期间禁止双提交，`tab_hint` 答案带可点击的 tab 跳转。Context value memoize + AbortController 修 logout 期 in-flight 竞态。 |
+| v0.9.0 | 2026-05-01 | feat | **Save Thesis + Share Link（Phase 2）**：新 `SavedThesis` ORM（UUID 主键 + JSONB hero/components 快照 + `is_public` 默认 true）+ `/api/saved-thesis` CRUD + 公开 `/api/share/thesis/{id}` 无授权读取。Hero 新增 [Save] / [Share] 按钮（Pro 启用），sidebar 加 "Saved theses" 段落，重访同一 ticker 时 Hero 下方显示 MoS / Confidence / Price / Signal 的差异条。`/s/[id]` 公开只读 canvas（隐藏 Save/Watch + 不显示 diff strip） |
+| v0.8.0 | 2026-05-01 | feat | **Verdict-First UI 重构（Phase 1）**：右侧 19 张卡片纵向堆叠 → sticky **Verdict Hero**（signal/MoS/confidence/risks/thesis/entry-exit 5 字段）+ **5 个 Tab**（Verdict / Valuation / Strategy / Risks & Moat / Sources）。`ConversationPanel` 在 `status==='complete'` 后自动折叠为 **56px rail**，点击展开 420px overlay。推理 trace 从 chat 移至 Sources tab。Tab 不自动切换，新卡片用脉冲点提示。 |
 | v0.7.2 | 2026-04-28 | feat | **Admin 运行时切换 LLM provider**：`PATCH /api/admin/settings` 现支持 `llm_api_key` / `llm_base_url` / `llm_model` / `llm_narrative_*` 6 个字段。改动后 LLMClient singleton 自动失效，下次请求重建（不重启）。GET/PATCH/reset 响应中 api_key 自动 redacted（`***last4` 格式）。bad URL 拒绝在 PATCH 阶段，避免后续请求才发现 |
 | v0.7.1 | 2026-04-26 | docs | **文档体系重构（@Skyward666 + follow-up）**：ARCHITECTURE.md 拆分为三层文档体系（系统全景 + `docs/nodes/` 节点详情 + `docs/decisions/` 架构决策记录）。__PR #3__ 引入结构 + 8 个 v0.4 节点文档 + 5 个 ADR。__PR #6__ 跟进补齐 v0.5/0.6/0.7 内容：4 个 Pro 节点文档（09-12）+ 4 个 ADR（006-009）；ARCHITECTURE.md §11-14 缩为 §10 概览（-320 行）|
 | v0.7.0 | 2026-04-25 | feat | **认证 + 订阅分级（Phase 2）**：邮箱/密码 + Magic Link + Google OAuth 三种登录方式；PostgreSQL 持久化；JWT 会话；4 个 Pro 节点按 user.tier 门控（free 用户看到锁定预览卡）；admin 可手动升级用户为 Pro。新增 `services/auth/` 模块、Alembic 迁移、AuthProvider Context、登录/注册页 |
@@ -15,6 +18,266 @@
 | v0.3.0 | 2026-04-21 | feat | 消息面情绪修正：Finnhub 新闻 + 内部人情绪 → 综合评分 → 安全边际调整。新增 Finnhub 客户端、DeepSeek LLM 情绪分析、sentiment_card 组件 |
 | v0.2.0 | 2026-04-17 | feat | 相对估值（市场乘数法）：当前乘数 + 历史百分位 + 同业对比。新增 FMP API 客户端、relative_valuation_card 组件 |
 | v0.1.0 | 2026-04-17 | — | 初始版本：SEC EDGAR 数据获取、财务健康扫描、DCF 估值建模、买入策略、数据溯源、SSE + Generative UI |
+
+---
+
+## v0.10.0 — Watchlist + Follow-up Q&A（Phase 3）
+
+**日期：** 2026-05-01
+
+### 概要
+
+留存层闭环：把 ticker 加入 watchlist 设阈值（cron + 邮件告警留待后续），现 schema 已就绪；Pro 用户在 overlay conversation 里直接对当前 canvas 上下文提问（"如果增速 -2pp 会怎样"），LLM 答案带 tab_hint 直接跳到相关 tab。Phase 1 的折叠 rail 现在有了真正的"Ask follow-up"含义。
+
+### 后端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/backend/api/watchlist.py` | 3 个端点：GET `/api/watchlist`（列表 mine）/ PUT `/api/watchlist/{ticker}`（upsert 含 `target_mos_pct: ge=-100, le=100`）/ DELETE `/api/watchlist/{ticker}`。Ticker `^[A-Za-z]{1,8}$` 验证 |
+| `backend/backend/api/follow_up.py` | POST `/api/follow-up`（`require_pro` gate + BUCKET_RECALCULATE 限流 + `bind_client_ip` 计费）。请求 body `{ticker, question(2-500 chars), hero_snapshot?, components_snapshot[]}`；调用 `complete_json("follow_up", v=1, response_model=FollowUpAnswer)` 并返回 `{answer, tab_hint, confidence}` |
+| `backend/backend/prompts/follow_up_v1.yaml` | YAML prompt（temp=0.4, max_tokens=1200）。System prompt 含反注入边界（`<<<USER_CONTENT>>>` 标记 + DATA-only 指令）。Schema 强制 tab_hint ∈ verdict/valuation/strategy/risks/sources/null |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `backend/backend/main.py` | 加 `watchlist_router` + `follow_up_router` 注册 |
+
+> v0.9 已添加 `services/watchlist.py`（schema 就绪）；本版本启用其 code path。
+
+### 前端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/lib/watchlist-api.ts` | listWatchlist (signal) / upsertWatch / removeWatch |
+| `frontend/src/lib/follow-up-api.ts` | askFollowUp |
+| `frontend/src/context/watchlist-context.tsx` | `WatchlistProvider`：refresh / add（先 filter 再 prepend，处理同 ticker 改阈值）/ remove / `isWatching` / `itemFor`。useMemo value 防全量 consumer re-render；AbortController + post-await aborted 检查防 logout 竞态 |
+| `frontend/src/components/canvas/follow-up-section.tsx` | 嵌入对话面板（仅 `status==='complete' && components.length > 0` 时渲染）。Threaded Q&A，pending 期间 `submittable=false` 禁止双提交。Pro-only gate；非 Pro / anonymous 显示 disabled input + 升级提示。`tab_hint` 答案显示 "See Valuation tab →" 可点击 button |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `frontend/src/lib/types.ts` | 加 `WatchlistItem` / `TabHint` / `FollowUpAnswer` 类型 |
+| `frontend/src/context/saved-thesis-context.tsx` | 同 watchlist 一样加 useMemo value + AbortController 模式 |
+| `frontend/src/components/canvas/hero-actions.tsx` | 加 `<WatchButton>` + `<ThresholdDialog>`。Watch 按钮 toggle：未 watch 时打开阈值对话框；已 watch 时点击 unwatch（"已 watching 时点=改阈值"是 future polish）。ThresholdDialog 客户端 [-100, 100] 验证 + 范围错误红框 + disable 提交，避免 422 静默吞掉 |
+| `frontend/src/components/conversation-panel.tsx` | 接收 `components?` + `onJumpToTab?` props；在 verdict 下方条件性渲染 `<FollowUpSection key={ticker}>`（`key={ticker}` 防缓存切换 thread 残留） |
+| `frontend/src/components/analysis-canvas.tsx` | activeTab 提升为 prop（来自 app-shell），不再内部 `useState`。VerdictHero `onJumpToTab` 走父级 setter |
+| `frontend/src/components/layout/app-shell.tsx` | 把 `activeTab` 状态提升至此层（让 conversation overlay 的 follow-up tab_hint 能切 canvas tab）+ `handleJumpToTab` useCallback 同时关闭 overlay |
+| `frontend/src/components/layout/sidebar.tsx` | 加 `<WatchlistSection>`：列出 user 的 watchlist，点 ticker 合成 fake history entry 触发 `onSelectHistory` 走 `handleSubmitTicker` 重分析 |
+| `frontend/src/app/layout.tsx` | 包 `<WatchlistProvider>` |
+
+### 数据库 schema
+
+```sql
+watchlist_items (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ticker          VARCHAR(8) NOT NULL,
+  target_mos_pct  FLOAT,                          -- alert threshold（cron 待补）
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_checked_at TIMESTAMPTZ,                    -- ↓ cron 字段，目前由 schema 占位
+  last_mos_pct    FLOAT,
+  last_signal     VARCHAR(32),
+  UNIQUE (user_id, ticker)
+)
+```
+
+> 表已在 v0.9 alembic 0002 迁移中创建；本版本启用 code path。
+
+### Follow-up Q&A 数据流
+
+```
+ConversationPanel overlay (status==='complete')
+  └ <FollowUpSection key={ticker}>
+       │
+       ├─ user types Q
+       ├─ submit → askFollowUp({ticker, question, hero_snapshot, components_snapshot})
+       │         POST /api/follow-up (require_pro, BUCKET_RECALCULATE limit, bind_client_ip)
+       │
+       │   backend:
+       │     hero_summary = render compact text from HeroSnapshot fields
+       │     components_summary = render top-12 cards (capped) per component_type
+       │     complete_json("follow_up", v=1, response_model=FollowUpAnswer)
+       │
+       └─ response → thread.push({question, state: ok, answer})
+             │       state.answer.tab_hint validated against 5 tab IDs
+             └─ "See Valuation tab →" → onJumpToTab(validTab) → setActiveTab + close overlay
+```
+
+### 竞态修复
+
+新加 AbortController 在 `SavedThesisProvider` 与 `WatchlistProvider` 的 refresh 中：
+
+1. logout 中 prev fetch 在飞 → `controller.abort()` 撤销，rejection 进 catch 吞掉
+2. fetch 已 resolve 但 setItems 未跑 → `if (!controller.signal.aborted) setItems(...)` 守住一帧内 race
+3. 组件 unmount → cleanup useEffect 触发最终 abort
+
+### 设计决策
+
+- **`require_pro` 而非 `get_optional_user`**：follow-up 烧 LLM 预算，与 Pro 节点同等门控
+- **BUCKET_RECALCULATE 共享配额**：30/day per IP；与 DCF recalc 共池避免 Pro 用户用一个端点喂另一个
+- **`tab_hint` 由 LLM 返回但客户端严格验证**：LLM 返回 "moat" 或 invalid 字符串时 `validTab=null`，跳转按钮不显示
+- **Watchlist 点击 = 重分析 而非 通知 panel**：用户点 sidebar ticker 是想看最新分析，不是查看历史阈值。点击合成 fake HistoryEntry 走 handleSubmitTicker 路径
+- **FollowUpSection `key={ticker}` 强制 remount**：换 ticker 时 thread / input state 干净重置，避免"AAPL 问的问题挂在 MSFT 视图上"
+- **`hasPending` 检查阻止双 Enter**：连按 Enter 时 `idx = thread.length` 闭包共享 stale 值会让两个更新都打到同一 thread 槽位
+
+### 已知未做
+
+- Watchlist cron + Resend 告警 — schema 已就绪（`last_checked_at` 等），需要单独 follow-up
+- Free 用户提示 "Upgrade to Pro" 但无升级流程链接
+- ThresholdDialog 无 ESC 键 / focus trap
+- Save / Watch 失败仅 console.warn 无 toast
+
+### 验证
+
+- TS / lint 通过；冒烟测试：401（无 auth）、403（free 用户 Pro endpoint）、404（不存在 share id）、200（frontend root）
+- prompts loader：`load_prompt('follow_up', version=1)` OK（temp=0.4, max=1200）
+
+---
+
+## v0.9.0 — Save Thesis + Share Link（Phase 2）
+
+**日期：** 2026-05-01
+
+### 概要
+
+让 Pro 用户把当前 canvas 的分析"钉住"成一份 snapshot，几周后回访可以看到关键字段如何漂移；同时提供公开 `/s/<uuid>` URL 给非用户分享。这是 Verdict-First 重构后第一个粘性钩子 — 一次性工具变成"我能记住当时怎么想"的工具。
+
+### 后端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/backend/services/saved_thesis.py` | `SavedThesis` ORM：UUID v4 字符串主键（避免遍历），`user_id` FK 含 ON DELETE CASCADE，`hero_snapshot` 与 `components_snapshot` 用 Postgres JSONB（hero 是摘要供 sidebar 廉价 diff，components 是 full ComponentInstruction[] 供 share 视图复原）。CRUD helpers `create_thesis` / `list_for_user` / `get_owned` / `get_public` / `delete_owned` |
+| `backend/backend/services/watchlist.py` | `WatchlistItem` ORM placeholder — schema 此处定义，code path 在 v0.10 启用。包含在 v0.9 是因为同一份 alembic 迁移建两张表 |
+| `backend/backend/api/saved_thesis.py` | 5 个端点：POST `/api/saved-thesis`（创建）/ GET（列表 mine）/ GET `/{id}`（读 mine）/ DELETE `/{id}`（删 mine）/ GET `/api/share/thesis/{id}`（公开只读，仅 `is_public=true` 才返回） |
+| `backend/alembic/versions/20260501_0002_saved_thesis_and_watchlist.py` | Alembic 迁移：建 `saved_theses` 和 `watchlist_items` 两张表（后者由 v0.10 使用） |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `backend/alembic/env.py` | 加 `SavedThesis` + `WatchlistItem` 模型导入（autogenerate 注册） |
+| `backend/backend/main.py` | 加 `saved_thesis_router` 注册 |
+
+### 数据库 schema
+
+```sql
+saved_theses (
+  id              VARCHAR(36) PRIMARY KEY,         -- UUID v4
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ticker          VARCHAR(8) NOT NULL,
+  title           VARCHAR(200),
+  is_public       BOOLEAN NOT NULL DEFAULT TRUE,
+  hero_snapshot   JSONB NOT NULL,                  -- HeroSnapshot 字段
+  components_snapshot JSONB NOT NULL,              -- ComponentInstruction[]
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+INDEX (user_id), INDEX (ticker)
+```
+
+### 前端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/lib/api-client.ts` | 通用 `apiRequest<T>(path, opts)` 包裹 fetch，标准化 FastAPI `{detail: ...}` 错误为 `ApiError` 抛出。`credentials: "include"` 透传 cookie auth |
+| `frontend/src/lib/saved-thesis-api.ts` | createSavedThesis / listSavedTheses / getSavedThesis / deleteSavedThesis / getPublicThesis |
+| `frontend/src/context/saved-thesis-context.tsx` | `SavedThesisProvider` 包 Auth 之下；`refresh` 在 status 变化时拉取，logout 时立即清；`save` 调 API 后乐观 prepend；`remove` 乐观 filter |
+| `frontend/src/components/canvas/hero-actions.tsx` | Hero 右侧的 [Save] / [Share] 按钮组。已 saved 时按钮变 [Saved][Share]，[Share] 复制 `/s/<uuid>` 到剪贴板（fallback 到 `window.prompt`）。匿名/Free 用户按钮 disabled 显示 "Sign in" tooltip |
+| `frontend/src/app/s/[id]/page.tsx` | 公开只读分享路由：调 `/api/share/thesis/{id}`，复用 `<VerdictHero isSnapshotView>` + `<CanvasTabs>`，顶部 banner 标识 "shared thesis · snapshot · {date}"，提供 "Run your own analysis" 引流 |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `frontend/src/lib/types.ts` | 新增 `HeroSnapshot` / `SavedThesisSummary` / `SavedThesisFull` 类型 |
+| `frontend/src/components/canvas/verdict-hero.tsx` | `deriveHero` 改为 `export`（share 路由也要派生），返回类型改用共享 `HeroSnapshot`。增加 `isSnapshotView` prop（true 时隐藏 actions + diff strip）；新增 `<HeroActions>` 整合 + 新内联 `SavedDiffStrip` 在重访已 saved 同一 ticker 时显示 MoS / Confidence / Price / Signal 4 项 delta（trend 颜色 + 涨跌图标）；`useState(() => Date.now())` lazy-init 以保持 render purity |
+| `frontend/src/components/layout/sidebar.tsx` | 在 History 上方插入 `<SavedThesesSection>`：列出用户所有 saved theses，行点击新窗口打开 `/s/<id>`（仅 `is_public=true`），右侧 hover 显示 X 删除按钮 |
+| `frontend/src/app/layout.tsx` | 把 `<HistoryProvider>` 包进 `<SavedThesisProvider>` 包进 `<AuthProvider>`，确保 saved thesis hooks 永远能拿到 auth context |
+
+### 设计决策
+
+- **UUID 主键 vs 整数自增**：share URLs 必须非可遍历（否则随机猜 id 就能 enumerate 别人的 thesis）。UUID v4 满足此要求，加 1 next-step 步骤可以加 confusion。
+- **`is_public` 默认 true**：保存的本意通常是分享或对比，private 是少数。用户如果隐私敏感可以未来加切换 UI。
+- **JSONB 存 components_snapshot 而非外键到 ComponentInstruction 表**：分析每次都重跑产生新 component 行，没必要规范化。JSONB 可以索引但目前不需要。
+- **`/api/share/thesis/{id}` 与 `/api/saved-thesis/{id}` 分开**：前者无授权但只返回 `is_public=true`；后者授权但返回 owner 的所有 saves（无论 is_public）。前端 `/s/[id]` 只走前者。
+- **乐观 UI**：save / remove 不等下一次 list 刷新，直接更新 context items。失败时回滚由 API 客户端的 ApiError throw 处理（hero-actions 内部 catch + console.warn）。
+- **`isSnapshotView` 的必要性**：未登录访客或访问别人的 share 时，diff strip 拿"我自己的 saved AAPL"对比"share 的 AAPL"，跨用户跨时间比较毫无意义，所以 share 路由传 `isSnapshotView` 抑制 diff strip 和 actions 渲染。
+
+### 拒绝的备选方案
+
+- ❌ **OG 图片 for share link**：next/og 渲染 hero strip 是病毒系数放大器，但 v0.9 不阻塞核心功能，留给后续。
+- ❌ **Owner-only viewer page** `/saved/[id]`：当 `is_public=false` 时 sidebar 链接走 `#` 不导航。当前所有 save 默认 public，gap 不显现；后续加私有切换 UI 时再补 owner-only viewer。
+- ❌ **Save 按钮在流式期间禁用**：用户可能想 save 部分分析做对比。current 行为允许保存任意 stage。`SavedDiffStrip` 在双方都有数据的字段才渲染 delta，缺字段静默跳过。
+
+### 验证
+
+- TS / lint 通过（与 v0.8 同标准）
+- 后端：`/api/saved-thesis`（无 auth）→ 401 ✓；`/api/share/thesis/<bad-uuid>` → 404 ✓
+- 已知限制（不阻塞 ship）：401 token 过期不强制 logout、 同 ticker 多次 save schema 允许但 UI 显示单份、Save 失败仅 console.warn
+
+---
+
+## v0.8.0 — Verdict-First UI 重构（Phase 1）
+
+**日期：** 2026-05-01
+
+### 概要
+
+原右侧 canvas 把 19 张分析卡片纵向堆叠在一列里（约 4000–6000px），用户输入 ticker 后要滚 5000px 才能拼出"该不该买、多有把握、为什么"的答案。本次重构按"答案→佐证→深挖→透明度"分层信息架构：
+
+1. **Verdict Hero**（sticky 顶部，5 字段）：signal pill / margin of safety / confidence / 高严重风险计数 / 一句话 thesis + entry/exit 价格区间。从已经在流的组件中派生，不重算。
+2. **5 个 Tab** 把 19 张卡片按角色分组：Verdict（推荐+论点）/ Valuation（估值数字）/ Strategy（时机/情绪）/ Risks & Moat（风险+护城河）/ Sources（来源 + 推理 trace）。
+3. **Conversation panel 折叠 rail**：流式中保持 420px 满展开（看进度+推理）；`status==='complete'` 后自动折叠成 56px rail。点 rail 弹出 420px overlay（不挤压 canvas，点遮罩或 X 关闭）。
+4. **流式 UX**：tab 不自动切换（避免抢焦点），非活动 tab 收到新卡片时脉冲红点提示。`risk_factors_card.severity == 'high'` 数 > 0 时 Hero 的 Risks 块变红可点跳 Risks tab。
+
+### 前端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/components/canvas/tab-groups.ts` | `TabId` 类型 + `TAB_ORDER` / `TAB_LABELS` / `tabFor(componentType)` 映射。19 张卡 → 5 tab，未识别类型 fallback 到 Sources |
+| `frontend/src/components/canvas/verdict-hero.tsx` | Hero 组件 + `deriveHero(components)`：从 `investment_thesis_card` / `strategy_dashboard` / `risk_factors_card` / `valuation_gauge` 派生 12 字段。recommendation 优先于 strategy.signal。Free tier 无 thesis card 时用 strategy.signal 兜底 |
+| `frontend/src/components/canvas/canvas-tabs.tsx` | shadcn Tabs 包裹的 5-tab 壳。`seenCounts` lazy-init 全 tab，pulse-dot 仅对**之后**到达的卡片触发。Sources tab 末尾追加 `<ReasoningTrace>` |
+| `frontend/src/components/canvas/reasoning-trace.tsx` | 推理 trace 卡。从原 `ConversationPanel` 的 per-node accordion 搬过来，按节点分组渲染 |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `frontend/src/components/analysis-canvas.tsx` | 扁平 `.map` 替换为 `<VerdictHero>` + `<CanvasTabs>` 双区。Hero 取自然高度，Tabs 内部独立滚动。`key={activeEntryId}` 强制切换缓存条目时 `seenCounts`/`activeTab` 重置 |
+| `frontend/src/components/conversation-panel.tsx` | 加 `collapsed` prop + `ConversationRail`（56px 单按钮）变体；`showCloseButton`+`onClose` 用于 overlay 模式；首次完成时一次性 localStorage tooltip。**移除** per-node 推理 accordion（搬到 Sources tab） |
+| `frontend/src/components/layout/app-shell.tsx` | 新增 `overlayOpen` 状态。`showRail = !isStreaming && ticker !== null`、`showOverlay = showRail && overlayOpen` 由 `displayStatus` 推导（不用 setState-in-effect）。Overlay 用 `absolute inset-0` 黑色 backdrop + `absolute left-[56px]` 浮层，点击 backdrop 或 X 按钮关闭 |
+
+### 设计决策
+
+- **Tabs 不自动切换**：避免抢焦点；脉冲红点提示新卡到达，由用户主动点击。
+- **Hero 单一来源**：直接读组件 props，不重算 → 永远不会和 tab 内部卡片不一致。
+- **推理 trace 移至 Sources tab**：折叠后 chat 只剩进度+verdict+输入框，避免折叠/展开间用户重读推理。
+- **Conversation panel 折叠为 rail 而非全隐藏**：保留 follow-up 提问的入口（Phase 3 会接 LLM）。
+- **流式期 vs 完成期分离 layout**：流式时 chat 重要，完成时 canvas 重要。Layout 跟随用户当前意图。
+
+### 拒绝的备选方案
+
+- ❌ **左侧 TOC 导航条**：scroll-spy 只是给那条 5000px 滚动加目录。把"信息过载"当导航问题处理 — 但实际是注意力问题。Tabs **隐藏**非当前组才是关键。
+- ❌ **chat 移到 hero 下变水平条**：保留 chat 可见性诱人，但牺牲垂直空间（图表的稀缺轴）。折叠到 rail 更诚实。
+- ❌ **游戏化徽章 / 社交 feed / 未触发的 AI 弹窗**：受众是投资人不是社交产品用户。
+
+### 验证
+
+- TS 通过（仅 fcf-chart/revenue-chart 已知 recharts 类型问题）
+- ESLint 通过（react-hooks/refs、react-hooks/set-state-in-effect、react-hooks/static-components 全部 0 错）
+- 手动验证：ticker 输入 → hero 字段渐入 → tab 计数 badge 增长 → 完成后 chat 折叠 → 点 rail 展开 overlay → 点遮罩关闭
 
 ---
 

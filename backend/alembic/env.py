@@ -24,6 +24,8 @@ from backend.services.db import Base
 # Importing the models here registers them with Base.metadata so autogenerate
 # can detect schema diffs.
 from backend.services.auth.models import IdentityProvider, User  # noqa: F401
+from backend.services.saved_thesis import SavedThesis  # noqa: F401
+from backend.services.watchlist import WatchlistItem  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

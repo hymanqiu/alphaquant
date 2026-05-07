@@ -92,7 +92,7 @@ Open <http://localhost:3000>, type a ticker (e.g. `AAPL`), and watch the SSE str
 When configuring the OAuth client in Google Cloud Console:
 
 1. Application type: **Web application**
-2. Authorized redirect URIs: `http://localhost:8000/api/auth/google/callback` (dev) and your production callback
+2. Authorized redirect URIs: `http://localhost:3000/api/auth/google/callback` (dev — must match the frontend proxy origin so the `aq_oauth_state` cookie is delivered) and your production callback
 3. Scopes are requested at runtime (`openid email profile`); you do NOT need to enable "OAuth consent screen" for testing inside the same Google Workspace.
 
 ---
