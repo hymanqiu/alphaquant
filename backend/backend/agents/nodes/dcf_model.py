@@ -32,24 +32,51 @@ def _estimate_wacc(
     debt: float | None,
     equity: float | None,
     interest_expense: float | None,
+    market_cap: float | None = None,
     risk_free_rate: float = 0.045,
     equity_risk_premium: float = 0.055,
     beta: float = 1.2,
     tax_rate: float = 0.21,
 ) -> float:
-    """Estimate WACC from available data. Falls back to reasonable defaults."""
+    """Estimate WACC from available data. Falls back to reasonable defaults.
+
+    Negative book equity (heavy buyback companies like MCD) → use ``market_cap``
+    as the equity weight if provided.
+    """
     cost_of_equity = risk_free_rate + beta * equity_risk_premium
 
-    if debt and equity and interest_expense and debt > 0:
+    # Choose what to use for the equity-side weight in WACC. When book equity
+    # is non-positive (heavy-buyback names like MCD whose retained-earnings
+    # column went negative) book equity is meaningless as a capital-structure
+    # proxy; fall back to market cap if available. We compute a separate
+    # variable so the original ``equity`` argument (book equity) is not
+    # mutated — readers downstream shouldn't have to remember which one this
+    # is.
+    equity_weight = equity
+    if (
+        equity_weight is not None
+        and equity_weight <= 0
+        and market_cap
+        and market_cap > 0
+    ):
+        equity_weight = market_cap
+
+    if (
+        debt
+        and equity_weight
+        and equity_weight > 0
+        and interest_expense
+        and debt > 0
+    ):
         cost_of_debt = abs(interest_expense) / debt
-        total_capital = debt + equity
+        total_capital = debt + equity_weight
         wacc = (
-            (equity / total_capital) * cost_of_equity
+            (equity_weight / total_capital) * cost_of_equity
             + (debt / total_capital) * cost_of_debt * (1 - tax_rate)
         )
-        return max(wacc, 0.06)  # floor at 6%
+        return max(wacc, 0.04)  # floor at 4% (low for defensive low-beta names)
 
-    return cost_of_equity  # fallback: all-equity
+    return max(cost_of_equity, 0.04)
 
 
 def compute_dcf(
@@ -59,8 +86,24 @@ def compute_dcf(
     discount_rate: float,
     projection_years: int = 10,
     shares_outstanding: float | None = None,
+    cash: float | None = None,
+    long_term_debt: float | None = None,
 ) -> dict[str, Any]:
-    """Run the 2-stage DCF model."""
+    """Run the 2-stage DCF model.
+
+    If both ``cash`` and ``long_term_debt`` are provided, applies a partial
+    net-debt adjustment: per-share = (EV + cash − long_term_debt) / shares.
+    Otherwise falls back to EV / shares (legacy behavior, ignores capital
+    structure).
+
+    NOTE — this is **long-term** debt only, not full total debt. The current
+    SEC tag map exposes ``long_term_debt`` but does not yet aggregate
+    short-term borrowings, commercial paper, current portion of long-term
+    debt, or operating lease liabilities. For companies that lean heavily on
+    those, equity value is currently slightly overstated. A follow-up will
+    extend the SEC ingestion to a true total-debt field; until then the
+    parameter name reflects what we actually subtract.
+    """
     projected_fcf: list[dict[str, Any]] = []
     high_growth_years = projection_years // 2
 
@@ -97,12 +140,20 @@ def compute_dcf(
     pv_fcf_sum = sum(p["present_value"] for p in projected_fcf)
     enterprise_value = pv_fcf_sum + terminal_pv
 
+    # Equity value with partial net-debt adjustment when capital-structure
+    # data is available. ``long_term_debt`` only — see compute_dcf docstring.
+    if cash is not None and long_term_debt is not None:
+        equity_value = enterprise_value + cash - long_term_debt
+    else:
+        equity_value = enterprise_value  # legacy: no net debt adj
+
     result = {
         "projected_fcf": projected_fcf,
         "terminal_value": round(terminal_value, 2),
         "terminal_pv": round(terminal_pv, 2),
         "pv_fcf_sum": round(pv_fcf_sum, 2),
         "enterprise_value": round(enterprise_value, 2),
+        "equity_value": round(equity_value, 2),
         "intrinsic_value_per_share": None,
         "assumptions": {
             "growth_rate": round(growth_rate * 100, 2),
@@ -115,7 +166,7 @@ def compute_dcf(
 
     if shares_outstanding and shares_outstanding > 0:
         result["intrinsic_value_per_share"] = round(
-            enterprise_value / shares_outstanding, 2
+            equity_value / shares_outstanding, 2
         )
 
     return result
@@ -132,8 +183,10 @@ async def dcf_node(
         ).model_dump())
         return {"dcf_result": None, "reasoning_steps": ["ERROR: No financial data for DCF"]}
 
+    market_profile = state.get("market_profile") or {}
+
     try:
-        return _run_dcf(financials, writer)
+        return _run_dcf(financials, writer, market_profile)
     except Exception as e:
         logger.exception("DCF modeling failed for %s", financials.ticker)
         writer(ErrorEvent(
@@ -143,7 +196,9 @@ async def dcf_node(
         return {"dcf_result": None, "reasoning_steps": [f"ERROR: DCF failed - {e}"]}
 
 
-def _run_dcf(financials: Any, writer: StreamWriter) -> dict[str, Any]:
+def _run_dcf(
+    financials: Any, writer: StreamWriter, market_profile: dict[str, Any] | None = None
+) -> dict[str, Any]:
     writer(AgentThinkingEvent(
         node="dynamic_dcf",
         content="Building DCF model from historical free cash flow...",
@@ -187,31 +242,48 @@ def _run_dcf(financials: Any, writer: StreamWriter) -> dict[str, Any]:
         content=f"FCF growth rate: {growth_rate * 100:.1f}% (3yr CAGR: {growth_3yr * 100:.1f}% weighted with 5yr)" if growth_3yr else f"FCF growth rate: {growth_rate * 100:.1f}%",
     ).model_dump())
 
-    # Estimate WACC
+    # Estimate WACC — uses live beta from market_profile when available
     debt = financials.long_term_debt[-1].value if financials.long_term_debt else None
     equity = financials.stockholders_equity[-1].value if financials.stockholders_equity else None
     interest = financials.interest_expense[-1].value if financials.interest_expense else None
+    cash = financials.cash_and_equivalents[-1].value if financials.cash_and_equivalents else None
 
-    discount_rate = _estimate_wacc(debt, equity, interest)
+    profile = market_profile or {}
+    # Fallback only when beta is genuinely missing — a real beta of exactly
+    # 0.0 (rare but possible for cash-equivalent ETFs / hedged instruments)
+    # should not silently get rewritten to 1.2.
+    beta = profile.get("beta")
+    if beta is None:
+        beta = 1.2
+    market_cap = profile.get("market_cap")
+
+    discount_rate = _estimate_wacc(
+        debt, equity, interest, market_cap=market_cap, beta=beta
+    )
     terminal_growth = 0.03
 
-    reasoning.append(f"WACC (discount rate): {discount_rate * 100:.1f}%")
+    reasoning.append(
+        f"WACC (discount rate): {discount_rate * 100:.1f}% (beta={beta:.2f})"
+    )
 
     writer(AgentThinkingEvent(
         node="dynamic_dcf",
-        content=f"Estimated WACC: {discount_rate * 100:.1f}%. Terminal growth: {terminal_growth * 100:.1f}%.",
+        content=f"Estimated WACC: {discount_rate * 100:.1f}% (beta={beta:.2f}). "
+                f"Terminal growth: {terminal_growth * 100:.1f}%.",
     ).model_dump())
 
     # Shares outstanding
     shares = financials.diluted_shares[-1].value if financials.diluted_shares else None
 
-    # Run DCF
+    # Run DCF (with net debt adjustment when cash + debt available)
     dcf_result = compute_dcf(
         latest_fcf=latest_fcf,
         growth_rate=growth_rate,
         terminal_growth_rate=terminal_growth,
         discount_rate=discount_rate,
         shares_outstanding=shares,
+        cash=cash,
+        long_term_debt=debt,
     )
 
     if dcf_result["intrinsic_value_per_share"]:

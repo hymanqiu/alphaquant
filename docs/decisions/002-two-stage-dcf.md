@@ -48,12 +48,17 @@ DCF 估值模型有多种阶段划分方式。核心问题是如何建模公司�
 |------|-----|------|
 | risk_free_rate | 4.5% | 硬编码 (美国10年期国债近似) |
 | equity_risk_premium | 5.5% | 硬编码 (历史平均) |
-| beta | 1.2 | 硬编码 (科技股近似) |
+| beta | 动态 / 1.2 | FMP `/stable/profile` 实时获取，缺失时回退 1.2 |
 | tax_rate | 21% | 硬编码 (美国联邦企业税) |
 | growth_cap | 30% | 防止不合理的极高增长 |
 | terminal_growth | 3.0% | 固定假设 (近似GDP增长) |
-| WACC floor | 6% | 防止不合理低价折现 |
+| WACC floor | 4% | 防止不合理低价折现（原 6%，对低 beta 防御股偏高） |
+
+**部分净债务调整**: 自 2026-05 起，`per_share = (EV + cash − long_term_debt) / shares`，而非早期版本的 `EV / shares`。后者忽略资本结构，对 KO 这类高净债公司高估、对 GOOG 这类高净现金公司低估。当前仅扣**长期债务** — 短期借款 / 商业票据 / 长债当期 / 经营租赁负债待 SEC tag map 升级后补齐为完整 total debt。
+
+**负权益兜底**: 若 `stockholders_equity ≤ 0`（重度回购公司如 MCD），且 `market_profile.market_cap` 可用，则用市值替代权益权重计算 WACC，避免 E/V 为负数导致的数学异常。
 
 **未决问题**:
-- [ ] risk_free_rate 和 beta 应该从外部 API 动态获取，而不是硬编码
+- [x] beta 已通过 FMP 动态获取（risk_free_rate 仍硬编码）
 - [ ] 是否应支持用户选择衰减方式（线性 vs H-model）
+- [ ] 30% 增长率上限对 NVDA 类超高增长公司低估明显，需考虑动态上限

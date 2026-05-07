@@ -18,6 +18,7 @@ from backend.models.events import (
     ErrorEvent,
     StepCompleteEvent,
 )
+from backend.services.market_data import market_data_client
 from backend.services.sec_agent import sec_data_service
 from backend.services.ticker_resolver import TickerNotFoundError
 
@@ -75,6 +76,13 @@ async def fetch_sec_data_node(
             "fetch_errors": [str(e)],
             "reasoning_steps": [f"ERROR: SEC fetch failed - {e}"],
         }
+
+    # Fetch market profile (price/beta/market_cap) — best-effort, no hard fail.
+    # Used by DCF for live beta and negative-equity fallback.
+    try:
+        market_profile = await market_data_client.get_company_profile(ticker)
+    except Exception:
+        market_profile = {}
 
     writer(AgentThinkingEvent(
         node="fetch_sec_data",
@@ -161,6 +169,7 @@ async def fetch_sec_data_node(
 
     return {
         "financials": financials,
+        "market_profile": market_profile or None,
         "fetch_errors": [],
         "reasoning_steps": [
             f"Fetched SEC data for {financials.entity_name}",
