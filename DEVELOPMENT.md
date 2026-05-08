@@ -260,6 +260,8 @@ rather than blanking the api_key (since blanks fall back to env).
 
 **LLM features all show "skipped" or "Pro-only".** Either `AQ_LLM_API_KEY` is empty, the user is on free tier, or the budget tripped. Check `make usage`.
 
+**Progress bar / thinking panel only updates after the whole analysis finishes.** Next.js dev server's `rewrites` proxy buffers chunked SSE responses. The frontend now defaults `API_BASE_URL` to `http://127.0.0.1:8000` in dev mode (see `frontend/src/lib/constants.ts`), so EventSource connects directly to the backend and bypasses the proxy. Backend CORS already allows `localhost:3000`. Production builds still use the empty string (same-origin) since real reverse proxies (Nginx, etc.) stream correctly. Override either default via `NEXT_PUBLIC_API_URL`.
+
 ---
 
 ## 11. Where to read more
