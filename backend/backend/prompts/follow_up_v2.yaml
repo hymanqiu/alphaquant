@@ -6,7 +6,7 @@ max_tokens: 1200
 response_schema: FollowUpAnswer
 
 # v2 (2026-05-06): added "pulse" to tab_hint enum to match the new Pulse tab
-# introduced in ADR-010. v1 preserved per project convention (旧版不要删).
+# introduced in ADR-013. v1 preserved per project convention (旧版不要删).
 
 system: |
   You are a follow-up Q&A assistant for an AlphaQuant analysis the user is

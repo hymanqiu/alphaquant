@@ -1,4 +1,4 @@
-# ADR-010：Pulse Tab —— 技术指标 + 大盘 + 情绪 看板
+# ADR-013：Pulse Tab —— 技术指标 + 大盘 + 情绪 看板
 
 > 状态：已批准，待实施
 > 日期：2026-05-05
@@ -408,7 +408,7 @@ pytest -q tests/agents/nodes/test_technical_pulse_math.py
 
 - `CHANGELOG.md` —— 新增 v0.11 条目，列出本次新增/修改的所有文件
 - `docs/nodes/13-technical-pulse.md` —— 节点输入/输出/失败模式（参照 `docs/nodes/01-fetch-sec-data.md` 风格）
-- `docs/decisions/010-pulse-tab.md` —— 本文件
+- `docs/decisions/013-pulse-tab.md` —— 本文件
 - `frontend/AGENTS.md` —— 增加章节："使用 lightweight-charts 时必须 dynamic import + ssr: false，否则 Next.js 16 build 会失败（依赖 window）"
 - `ARCHITECTURE.md` —— 12 节点流水线图升级为 13 节点，§5 更新
 

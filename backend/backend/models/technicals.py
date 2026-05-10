@@ -1,7 +1,7 @@
 """Pulse tab data contract: technical indicators, signals, sentiment, market context.
 
 Emitted by the ``technical_pulse`` node and rendered by the Pulse tab on the
-frontend (six dedicated components). See ``docs/decisions/010-pulse-tab.md``.
+frontend (six dedicated components). See ``docs/decisions/013-pulse-tab.md``.
 """
 
 from __future__ import annotations

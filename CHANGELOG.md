@@ -6,10 +6,10 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
-| v0.11.0 | 2026-05-06 | feat | **Pulse Tab — 技术指标 + 大盘 + 情绪看板（13 节点）**：新增第 13 节点 `technical_pulse`（无 LLM、Free 可用），位于 `strategy → technical_pulse → qualitative_analysis`。后端：`technical_pulse_math.py` 11 条规则（8 bull / 3 bear）+ 加权 tanh 评分 0-100，`technicals_data.py` 串行 async 拉 FMP 1Y OHLCV + ^VIX / ^TNX / ^DXY / 板块 ETF + Finnhub insider 90d + CNN F&G，所有 fetcher 套 5 min 内存 TTL 缓存（市场指数同 IP 多次分析共享，FMP 调用 7→0 / 7→3）。前端新 `pulse/` 目录 6 张卡（hero / 1Y K 线 lightweight-charts v5 + MA20 + volume / 4-up 指标网格 / signal chips / 5 项 market context / F&G 半圆渐变仪表盘 + sentiment 列表）。新 `pulse` tab 插入 Risks 与 Sources 之间。`follow_up_v2.yaml` 把 `pulse` 加进 `tab_hint` 严格枚举。`use-analysis-stream.ts::PIPELINE_NODES` 同步加 `technical_pulse`（前端进度条原本硬编码 12 步）。`^TNX` 自适应缩放（CBOE × 10 与 FMP 归一化两种 provider 行为通吃）。验收：150 backend tests / tsc 无新增错误 / Pulse 节点 0 LLM 调用。 |
-| v0.10.0 | 2026-05-01 | feat | **Watchlist + Follow-up Q&A（Phase 3）**：新 `WatchlistItem` ORM（user_id+ticker 唯一约束，`target_mos_pct` 阈值占位）+ `/api/watchlist` CRUD（cron 告警留待后续）。Hero 加 [Watch] 按钮 + 阈值对话框（[-100, 100] 客户端验证）；sidebar 加 "Watching" 段落，点击 ticker 触发重分析。新 `/api/follow-up` 端点（Pro 必需）+ `follow_up_v1.yaml` prompt：基于当前 hero+canvas 的上下文回答 Q&A，复用现有 LLM 客户端 + 预算守护 + 计费。`<FollowUpSection>` 嵌入对话面板 overlay，threaded Q&A，pending 期间禁止双提交，`tab_hint` 答案带可点击的 tab 跳转。Context value memoize + AbortController 修 logout 期 in-flight 竞态。 |
-| v0.9.0 | 2026-05-01 | feat | **Save Thesis + Share Link（Phase 2）**：新 `SavedThesis` ORM（UUID 主键 + JSONB hero/components 快照 + `is_public` 默认 true）+ `/api/saved-thesis` CRUD + 公开 `/api/share/thesis/{id}` 无授权读取。Hero 新增 [Save] / [Share] 按钮（Pro 启用），sidebar 加 "Saved theses" 段落，重访同一 ticker 时 Hero 下方显示 MoS / Confidence / Price / Signal 的差异条。`/s/[id]` 公开只读 canvas（隐藏 Save/Watch + 不显示 diff strip） |
-| v0.8.0 | 2026-05-01 | feat | **Verdict-First UI 重构（Phase 1）**：右侧 19 张卡片纵向堆叠 → sticky **Verdict Hero**（signal/MoS/confidence/risks/thesis/entry-exit 5 字段）+ **5 个 Tab**（Verdict / Valuation / Strategy / Risks & Moat / Sources）。`ConversationPanel` 在 `status==='complete'` 后自动折叠为 **56px rail**，点击展开 420px overlay。推理 trace 从 chat 移至 Sources tab。Tab 不自动切换，新卡片用脉冲点提示。 |
+| v0.11.0 | 2026-05-06 | feat | **Pulse Tab — 技术指标 + 大盘 + 情绪看板（13 节点）**：新增第 13 节点 `technical_pulse`（无 LLM、Free 可用），位于 `strategy → technical_pulse → qualitative_analysis`。后端：`technical_pulse_math.py` 11 条规则（8 bull / 3 bear）+ 加权 tanh 评分 0-100，`technicals_data.py` 并发 async 拉 FMP 1Y OHLCV + ^VIX / ^TNX / ^DXY / 板块 ETF + Finnhub insider 90d + CNN F&G（asyncio.gather，冷启动 ~2s → ~400ms），所有 fetcher 套 5 min TTL+LRU 内存缓存（maxsize=256，市场指数同 IP 多次分析共享，FMP 调用 7→0 / 7→3）。前端新 `pulse/` 目录 6 张卡（hero / 1Y K 线 lightweight-charts v5 + MA20 + volume / 4-up 指标网格 / signal chips / 5 项 market context / F&G 半圆渐变仪表盘 + sentiment 列表）。新 `pulse` tab 插入 Risks 与 Sources 之间。`follow_up_v2.yaml` 把 `pulse` 加进 `tab_hint` 严格枚举。`use-analysis-stream.ts::PIPELINE_NODES` 同步加 `technical_pulse`（前端进度条原本硬编码 12 步）。`^TNX` 自适应缩放（CBOE × 10 与 FMP 归一化两种 provider 行为通吃）。验收：150 backend tests / tsc 无新增错误 / Pulse 节点 0 LLM 调用。详见 [ADR 013](docs/decisions/013-pulse-tab.md)。 |
+| v0.10.0 | 2026-05-01 | feat | **Watchlist + Follow-up Q&A（Phase 3）**：新 `WatchlistItem` ORM（user_id+ticker 唯一约束，`target_mos_pct` 阈值占位）+ `/api/watchlist` CRUD（cron 告警留待后续）。Hero 加 [Watch] 按钮 + 阈值对话框（[-100, 100] 客户端验证）；sidebar 加 "Watching" 段落，点击 ticker 触发重分析。新 `/api/follow-up` 端点（Pro 必需）+ `follow_up_v1.yaml` prompt：基于当前 hero+canvas 的上下文回答 Q&A，复用现有 LLM 客户端 + 预算守护 + 计费。`<FollowUpSection>` 嵌入对话面板 overlay，threaded Q&A，pending 期间禁止双提交，`tab_hint` 答案带可点击的 tab 跳转。Context value memoize + AbortController 修 logout 期 in-flight 竞态。详见 [ADR 012](docs/decisions/012-watchlist-and-followup.md)。 |
+| v0.9.0 | 2026-05-01 | feat | **Save Thesis + Share Link（Phase 2）**：新 `SavedThesis` ORM（UUID 主键 + JSONB hero/components 快照 + `is_public` 默认 true）+ `/api/saved-thesis` CRUD + 公开 `/api/share/thesis/{id}` 无授权读取。Hero 新增 [Save] / [Share] 按钮（Pro 启用），sidebar 加 "Saved theses" 段落，重访同一 ticker 时 Hero 下方显示 MoS / Confidence / Price / Signal 的差异条。`/s/[id]` 公开只读 canvas（隐藏 Save/Watch + 不显示 diff strip）。详见 [ADR 011](docs/decisions/011-saved-thesis-snapshot.md)。 |
+| v0.8.0 | 2026-05-01 | feat | **Verdict-First UI 重构（Phase 1）**：右侧 19 张卡片纵向堆叠 → sticky **Verdict Hero**（signal/MoS/confidence/risks/thesis/entry-exit 5 字段）+ **5 个 Tab**（Verdict / Valuation / Strategy / Risks & Moat / Sources）。`ConversationPanel` 在 `status==='complete'` 后自动折叠为 **56px rail**，点击展开 420px overlay。推理 trace 从 chat 移至 Sources tab。Tab 不自动切换，新卡片用脉冲点提示。详见 [ADR 010](docs/decisions/010-verdict-first-ui.md)。 |
 | v0.7.2 | 2026-04-28 | feat | **Admin 运行时切换 LLM provider**：`PATCH /api/admin/settings` 现支持 `llm_api_key` / `llm_base_url` / `llm_model` / `llm_narrative_*` 6 个字段。改动后 LLMClient singleton 自动失效，下次请求重建（不重启）。GET/PATCH/reset 响应中 api_key 自动 redacted（`***last4` 格式）。bad URL 拒绝在 PATCH 阶段，避免后续请求才发现 |
 | v0.7.1 | 2026-04-26 | docs | **文档体系重构（@Skyward666 + follow-up）**：ARCHITECTURE.md 拆分为三层文档体系（系统全景 + `docs/nodes/` 节点详情 + `docs/decisions/` 架构决策记录）。__PR #3__ 引入结构 + 8 个 v0.4 节点文档 + 5 个 ADR。__PR #6__ 跟进补齐 v0.5/0.6/0.7 内容：4 个 Pro 节点文档（09-12）+ 4 个 ADR（006-009）；ARCHITECTURE.md §11-14 缩为 §10 概览（-320 行）|
 | v0.7.0 | 2026-04-25 | feat | **认证 + 订阅分级（Phase 2）**：邮箱/密码 + Magic Link + Google OAuth 三种登录方式；PostgreSQL 持久化；JWT 会话；4 个 Pro 节点按 user.tier 门控（free 用户看到锁定预览卡）；admin 可手动升级用户为 Pro。新增 `services/auth/` 模块、Alembic 迁移、AuthProvider Context、登录/注册页 |
@@ -28,7 +28,7 @@
 
 ### 概要
 
-填补 Free / Pro 之间的产品差距：技术面 + 大盘 + 情绪面快照对所有用户开放，全程 0 LLM 调用，全局预算耗尽时仍可用。新增第 13 节点 `technical_pulse`，前端新增 6 张卡组成的 `pulse` tab（在 Risks 与 Sources 之间）。详见 [ADR 010](docs/decisions/010-pulse-tab.md)。
+填补 Free / Pro 之间的产品差距：技术面 + 大盘 + 情绪面快照对所有用户开放，全程 0 LLM 调用，全局预算耗尽时仍可用。新增第 13 节点 `technical_pulse`，前端新增 6 张卡组成的 `pulse` tab（在 Risks 与 Sources 之间）。详见 [ADR 013](docs/decisions/013-pulse-tab.md)。
 
 ### 后端变更
 
@@ -43,7 +43,7 @@
 | `backend/backend/prompts/follow_up_v2.yaml` | bump 自 v1：`tab_hint` 严格枚举里加 `"pulse"` + system prompt 给 LLM 路由提示（"Use 'pulse' for technical indicators / signals / sentiment 等"）。v1 保留 |
 | `backend/tests/agents/nodes/test_technical_pulse_math.py` | 17 个单测覆盖评分阈值、5 个关键 detector（golden cross / MACD 5d 窗口 / RSI bearish divergence / distribution days ≥4 / above_vwap 5 连日 / relative strength vs SPY） |
 | `docs/nodes/13-technical-pulse.md` | 节点合同文档 |
-| `docs/decisions/010-pulse-tab.md` | ADR：决策摘要 + 11 条规则全表 + 视觉规范 + 降级策略 + 验收清单 |
+| `docs/decisions/013-pulse-tab.md` | ADR：决策摘要 + 11 条规则全表 + 视觉规范 + 降级策略 + 验收清单 |
 
 #### 修改文件
 

@@ -2,7 +2,7 @@
 
 Produces a 1Y technical-indicator + market + sentiment snapshot, packaged for
 the frontend's Pulse tab. Free-tier accessible (no LLM calls; the whole tab is
-deterministic + rule-based, see ADR-010).
+deterministic + rule-based, see ADR-013).
 
 Concurrent data fetches: ticker OHLCV is awaited first (a hard prerequisite —
 its failure short-circuits the node). Everything else (SPY history, company

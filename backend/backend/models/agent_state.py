@@ -16,6 +16,8 @@ class AnalysisState(TypedDict):
     # SEC data
     financials: CompanyFinancials | None
     fetch_errors: list[str]
+    # Market profile (FMP): price, beta, market_cap, sector, industry
+    market_profile: dict[str, Any] | None
     # Financial health
     health_metrics: dict[str, Any] | None
     health_assessment: str | None

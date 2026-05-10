@@ -4,7 +4,7 @@
 
 ## 职责
 
-生成"币圈达成看板风格"的技术面 + 大盘 + 情绪面快照，作为 Free tier 与 Pro tier 之间的产品差异化补充层。**0 LLM 调用**——纯规则计算，全局 LLM 预算耗尽时仍可用。详见 [ADR 010](../decisions/010-pulse-tab.md)。
+生成"币圈达成看板风格"的技术面 + 大盘 + 情绪面快照，作为 Free tier 与 Pro tier 之间的产品差异化补充层。**0 LLM 调用**——纯规则计算，全局 LLM 预算耗尽时仍可用。详见 [ADR 013](../decisions/013-pulse-tab.md)。
 
 ## 输入
 
@@ -66,7 +66,7 @@ signal_label(score):
   其余 → Strong Buy
 ```
 
-完整规则阈值与权重见 [ADR 010 §4.4](../decisions/010-pulse-tab.md#44-信号规则全表)。
+完整规则阈值与权重见 [ADR 013 §4.4](../decisions/013-pulse-tab.md#44-信号规则全表)。
 
 ### 数据获取顺序（串行 async）
 
@@ -151,4 +151,4 @@ ADR §4.8 列出 2 个未来 Pro 锁定卡——**v0.11 不实现**：
 
 ## ADR 参考
 
-[ADR 010: Pulse Tab](../decisions/010-pulse-tab.md) — 决策摘要、信号规则全表、视觉规范、降级策略。
+[ADR 013: Pulse Tab](../decisions/013-pulse-tab.md) — 决策摘要、信号规则全表、视觉规范、降级策略。
