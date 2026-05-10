@@ -31,7 +31,7 @@
 | `financials.operating_income` | `list[AnnualMetric]` | ⬜ | EV/EBIT |
 | `financials.free_cash_flow` | `list[AnnualMetric]` | ⬜ | EV/FCF |
 | `financials.stockholders_equity` | `list[AnnualMetric]` | ⬜ | P/B |
-| `financials.long_term_debt` | `list[AnnualMetric]` | ⬜ | EV |
+| `financials.total_debt` | `list[AnnualMetric]` | ⬜ | EV (优先使用聚合 total_debt；缺失时回退到 long_term_debt) |
 | `financials.cash_and_equivalents` | `list[AnnualMetric]` | ⬜ | EV |
 | `financials.depreciation_and_amortization` | `list[AnnualMetric]` | ⬜ | FFO |
 

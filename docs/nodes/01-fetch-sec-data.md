@@ -57,6 +57,9 @@ class CompanyFinancials(BaseModel):
     free_cash_flow: list[AnnualMetric] = []          # = OCF - |CapEx|
     interest_expense: list[AnnualMetric] = []
     long_term_debt: list[AnnualMetric] = []
+    short_term_debt: list[AnnualMetric] = []                 # ShortTermBorrowings / CommercialPaper / NotesPayableCurrent
+    long_term_debt_current: list[AnnualMetric] = []          # LongTermDebtCurrent (current portion of LTD)
+    total_debt: list[AnnualMetric] = []                      # 派生: 上面三项按日历年聚合 (DCF / EV 用此字段)
     cash_and_equivalents: list[AnnualMetric] = []
     diluted_eps: list[AnnualMetric] = []
     diluted_shares: list[AnnualMetric] = []

@@ -26,10 +26,10 @@
 | `financials.entity_name` | `str` | ✅ | UI 显示 |
 | `financials.ticker` | `str` | ✅ | 日志 |
 | `financials.free_cash_flow` | `list[AnnualMetric]` | ✅ | FCF 时间序列，需 ≥ 1 年；CAGR 需 ≥ 3 年 |
-| `financials.long_term_debt[-1].value` | `float \| None` | ⬜ | WACC 债务部分 (缺失 → 全权益模型)，同时用作部分净债务调整中扣减项（仅长期债务） |
+| `financials.total_debt[-1].value` | `float \| None` | ⬜ | WACC 债务部分 + 净债务调整扣减项。聚合 long-term debt + short-term debt + current portion of LTD（缺失 → 全权益模型） |
 | `financials.stockholders_equity[-1].value` | `float \| None` | ⬜ | WACC 权益部分 (≤ 0 → 回退 market_cap) |
 | `financials.interest_expense[-1].value` | `float \| None` | ⬜ | 计算债务成本 |
-| `financials.cash_and_equivalents[-1].value` | `float \| None` | ⬜ | 部分净债务调整: equity_value = EV + cash − long_term_debt |
+| `financials.cash_and_equivalents[-1].value` | `float \| None` | ⬜ | 净债务调整: equity_value = EV + cash − total_debt |
 | `financials.diluted_shares[-1].value` | `float \| None` | ⬜ | 每股价值 (缺失 → `intrinsic_value_per_share = None`) |
 | `market_profile.beta` | `float \| None` | ⬜ | CAPM beta (缺失 → 回退 1.2) |
 | `market_profile.market_cap` | `float \| None` | ⬜ | 负权益时的权益权重兜底 |
@@ -98,7 +98,7 @@
 
 > **增长率估算**: `3yr CAGR × 0.6 + 5yr CAGR × 0.4`，上限 30%，下限 2%。不足时回退 10%。
 > **WACC**: `risk_free(4.5%) + beta × ERP(5.5%)` 基础 + 债务调整。Beta 优先取 `market_profile.beta` (FMP)，缺失时回退 1.2。负权益时用 market_cap 替代权益权重。下限 4%。
-> **股权价值**: `EV + cash − long_term_debt`（**部分** 净债务调整：当前 SEC tag map 仅暴露长期债务，未聚合短期借款 / 商业票据 / 长债当期 / 经营租赁负债 — 后续 PR 补全）；`per_share = equity_value / shares`。
+> **股权价值**: `EV + cash − total_debt`（净债务调整；`total_debt` = long-term debt + short-term debt + current portion of LTD，由 `sec_agent._compute_total_debt` 按日历年聚合；经营租赁负债不计入 — 见 [ADR 002](../decisions/002-two-stage-dcf.md)）；`per_share = equity_value / shares`。
 
 ### NVDA 示例 (输出)
 
@@ -156,7 +156,7 @@
    ├── Phase 2 (Y6-10): 线性衰减 growth → terminal(3%)
    ├── Terminal Value = Y10_FCF × (1+terminal) / (discount - terminal)
    ├── EV = Σ PV(FCF) + PV(TV)
-   ├── Equity Value = EV + cash − long_term_debt  (部分净债务调整, 仅长期债务)
+   ├── Equity Value = EV + cash − total_debt  (净债务调整, 含 LT/ST/current portion of LTD)
    └── Intrinsic/Share = Equity Value / diluted_shares
 ```
 
@@ -166,7 +166,7 @@
 - **独立重算端点而非重跑全图** → [ADR 004](../decisions/004-separate-recalc-endpoint.md)
 - WACC 参数：risk_free=4.5%, ERP=5.5%, tax=21% 硬编码；beta 从 FMP 动态获取（缺失时回退 1.2）
 - 增长率上限 30%，WACC 下限 4%，永续增长率固定 3%
-- 每股内在价值含**部分**净债务调整：`(EV + cash − long_term_debt) / shares`（仅扣长期债务；短期借款 / 商业票据 / 长债当期 / 租赁负债待 SEC tag map 升级后补全）
+- 每股内在价值含净债务调整：`(EV + cash − total_debt) / shares`，其中 `total_debt = long-term debt + short-term debt + current portion of LTD`（按日历年聚合，缺项不补零）；经营租赁负债不计入 — 见 [ADR 002](../decisions/002-two-stage-dcf.md)
 
 ## LLM 使用
 

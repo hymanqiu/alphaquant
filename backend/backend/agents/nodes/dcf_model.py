@@ -87,22 +87,18 @@ def compute_dcf(
     projection_years: int = 10,
     shares_outstanding: float | None = None,
     cash: float | None = None,
-    long_term_debt: float | None = None,
+    total_debt: float | None = None,
 ) -> dict[str, Any]:
     """Run the 2-stage DCF model.
 
-    If both ``cash`` and ``long_term_debt`` are provided, applies a partial
-    net-debt adjustment: per-share = (EV + cash − long_term_debt) / shares.
-    Otherwise falls back to EV / shares (legacy behavior, ignores capital
-    structure).
+    If both ``cash`` and ``total_debt`` are provided, applies a net-debt
+    adjustment: per-share = (EV + cash − total_debt) / shares. Otherwise
+    falls back to EV / shares (legacy behavior, ignores capital structure).
 
-    NOTE — this is **long-term** debt only, not full total debt. The current
-    SEC tag map exposes ``long_term_debt`` but does not yet aggregate
-    short-term borrowings, commercial paper, current portion of long-term
-    debt, or operating lease liabilities. For companies that lean heavily on
-    those, equity value is currently slightly overstated. A follow-up will
-    extend the SEC ingestion to a true total-debt field; until then the
-    parameter name reflects what we actually subtract.
+    ``total_debt`` is the aggregate from ``CompanyFinancials.total_debt`` —
+    long-term debt + short-term borrowings + current portion of LTD, summed
+    component-wise by calendar year. Operating-lease liabilities are
+    intentionally excluded; see ADR 002 for rationale.
     """
     projected_fcf: list[dict[str, Any]] = []
     high_growth_years = projection_years // 2
@@ -140,10 +136,11 @@ def compute_dcf(
     pv_fcf_sum = sum(p["present_value"] for p in projected_fcf)
     enterprise_value = pv_fcf_sum + terminal_pv
 
-    # Equity value with partial net-debt adjustment when capital-structure
-    # data is available. ``long_term_debt`` only — see compute_dcf docstring.
-    if cash is not None and long_term_debt is not None:
-        equity_value = enterprise_value + cash - long_term_debt
+    # Equity value with net-debt adjustment when capital-structure data is
+    # available. ``total_debt`` covers long-term + short-term + current
+    # portion of LTD; see compute_dcf docstring.
+    if cash is not None and total_debt is not None:
+        equity_value = enterprise_value + cash - total_debt
     else:
         equity_value = enterprise_value  # legacy: no net debt adj
 
@@ -242,8 +239,11 @@ def _run_dcf(
         content=f"FCF growth rate: {growth_rate * 100:.1f}% (3yr CAGR: {growth_3yr * 100:.1f}% weighted with 5yr)" if growth_3yr else f"FCF growth rate: {growth_rate * 100:.1f}%",
     ).model_dump())
 
-    # Estimate WACC — uses live beta from market_profile when available
-    debt = financials.long_term_debt[-1].value if financials.long_term_debt else None
+    # Estimate WACC — uses live beta from market_profile when available.
+    # ``debt`` reads from total_debt (LT + ST + current portion of LTD) so
+    # WACC's debt weighting and the implied cost-of-debt denominator match
+    # the same scope as the net-debt subtraction in equity-value math.
+    debt = financials.total_debt[-1].value if financials.total_debt else None
     equity = financials.stockholders_equity[-1].value if financials.stockholders_equity else None
     interest = financials.interest_expense[-1].value if financials.interest_expense else None
     cash = financials.cash_and_equivalents[-1].value if financials.cash_and_equivalents else None
@@ -283,7 +283,7 @@ def _run_dcf(
         discount_rate=discount_rate,
         shares_outstanding=shares,
         cash=cash,
-        long_term_debt=debt,
+        total_debt=debt,
     )
 
     if dcf_result["intrinsic_value_per_share"]:

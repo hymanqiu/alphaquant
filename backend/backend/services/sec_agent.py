@@ -49,6 +49,21 @@ TAG_MAP: dict[str, list[str]] = {
         "LongTermDebt",
         "LongTermDebtNoncurrent",
     ],
+    "short_term_debt": [
+        # Short-term borrowings reported under current liabilities. Companies
+        # use a mix of these tags — commercial paper specifically when CP is
+        # the dominant funding mode, ShortTermBorrowings as a generic catch-all,
+        # NotesPayableCurrent for older filings.
+        "ShortTermBorrowings",
+        "CommercialPaper",
+        "NotesPayableCurrent",
+    ],
+    "long_term_debt_current": [
+        # Current portion of long-term debt — the slice maturing within 12mo
+        # carved out from total long-term debt. KO and MCD both report
+        # multi-billion values here, materially affecting net-debt math.
+        "LongTermDebtCurrent",
+    ],
     "cash_and_equivalents": [
         "CashAndCashEquivalentsAtCarryingValue",
         "CashCashEquivalentsAndShortTermInvestments",
@@ -151,6 +166,53 @@ def _extract_annual_metrics(
     return sorted(merged.values(), key=lambda m: m.calendar_year)
 
 
+def _compute_total_debt(
+    components: list[list[AnnualMetric]],
+) -> list[AnnualMetric]:
+    """Sum debt components by calendar year.
+
+    Each component (long-term debt, short-term debt, current portion of LTD)
+    is a series ``list[AnnualMetric]`` keyed by ``calendar_year``. We
+    aggregate per-year by summing whichever components have a value for
+    that year — missing components are skipped, NOT zero-filled, so
+    coverage gaps don't silently understate debt with phantom zeros.
+
+    Metadata (filing_date, accession, form) for the aggregate row is taken
+    from the most-recently-filed component for that year, which keeps
+    ``total_debt[-1]`` traceable to a real filing in audit trails.
+
+    Returns ``[]`` if no component has any data for any year — callers
+    should treat empty ``total_debt`` as "fall back to a debt-free DCF",
+    matching prior behavior when ``long_term_debt`` was empty.
+    """
+    if not any(components):
+        return []
+
+    by_year: dict[int, list[AnnualMetric]] = {}
+    for series in components:
+        for m in series:
+            by_year.setdefault(m.calendar_year, []).append(m)
+
+    result: list[AnnualMetric] = []
+    for cy in sorted(by_year):
+        rows = by_year[cy]
+        total = sum(m.value for m in rows)
+        # Most-recently-filed row provides the canonical metadata. Strings
+        # sort lexicographically which is correct for ISO filing dates.
+        anchor = max(rows, key=lambda m: m.filing_date)
+        result.append(
+            AnnualMetric(
+                calendar_year=cy,
+                value=total,
+                fiscal_year=anchor.fiscal_year,
+                filing_date=anchor.filing_date,
+                sec_accession=anchor.sec_accession,
+                form=anchor.form,
+            )
+        )
+    return result
+
+
 def _compute_free_cash_flow(
     ocf: list[AnnualMetric], capex: list[AnnualMetric]
 ) -> list[AnnualMetric]:
@@ -194,6 +256,16 @@ class SECDataService:
         data["free_cash_flow"] = _compute_free_cash_flow(
             data["operating_cash_flow"], data["capital_expenditure"]
         )
+
+        # Aggregate debt components into total_debt. Done after the per-tag
+        # extraction so each component still lives as its own field on
+        # CompanyFinancials (useful for audit / logic_trace), with total_debt
+        # as the canonical input for DCF / EV math.
+        data["total_debt"] = _compute_total_debt([
+            data["long_term_debt"],
+            data["short_term_debt"],
+            data["long_term_debt_current"],
+        ])
 
         return CompanyFinancials(
             cik=facts.cik,

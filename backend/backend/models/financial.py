@@ -33,6 +33,17 @@ class CompanyFinancials(BaseModel):
     free_cash_flow: list[AnnualMetric] = []
     interest_expense: list[AnnualMetric] = []
     long_term_debt: list[AnnualMetric] = []
+    # Short-term borrowings (commercial paper, notes payable, etc.) reported
+    # under current liabilities. Distinct from ``long_term_debt_current``,
+    # which is the *current portion* of long-term debt (within 1y maturity).
+    short_term_debt: list[AnnualMetric] = []
+    long_term_debt_current: list[AnnualMetric] = []
+    # Aggregate: long_term_debt + short_term_debt + long_term_debt_current,
+    # summed component-wise by calendar year. Operating-lease liabilities are
+    # NOT included in v1 (analytical choice — see docs/decisions/002 for the
+    # rationale). Use this for any DCF / EV calculation rather than reading
+    # individual components, so debt coverage stays consistent across nodes.
+    total_debt: list[AnnualMetric] = []
     cash_and_equivalents: list[AnnualMetric] = []
     diluted_eps: list[AnnualMetric] = []
     diluted_shares: list[AnnualMetric] = []
