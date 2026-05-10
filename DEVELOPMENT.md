@@ -169,7 +169,7 @@ The pattern is well-established. To add another, e.g. `dividend_safety_analysis`
 2. **Node** — `backend/backend/agents/nodes/dividend_safety.py` — define a Pydantic response model, write the async node function. Use `LLMClient.complete_json(prompt_name=..., response_model=...)` and `verify_quotes()` for any extracted quotes.
 3. **State** — add a new field to `AnalysisState` in `models/agent_state.py` and to the `initial_state` dict in `api/routes.py`.
 4. **Graph** — register in `agents/value_analyst.py` (add node + edge).
-5. **Frontend card** — `frontend/src/components/analysis/dividend-safety-card.tsx`. Register it in `component-registry.ts` keyed by the `component_type` your node emits.
+5. **Frontend card** — `frontend/src/components/analysis/dividend-safety-card.tsx`. Register it in **both** `component-registry.ts` (lazy import keyed by `component_type`) **and** `frontend/src/components/canvas/tab-groups.ts` (`TAB_BY_TYPE` mapping, decides which tab the card lives in). Skipping the tab-groups entry silently sends the card to the Sources tab fallback.
 6. **Pipeline step label** — add an entry in `frontend/src/hooks/use-analysis-stream.ts` so the UI displays a friendly progress label.
 7. **(Optional) Pro gate** — if the node should be Pro-only, import `_pro_gate.is_pro_user` and `emit_lock` and short-circuit at the top of the node. Register a `dividend_safety_locked_card` mapping to `pro-locked-card.tsx` in the registry.
 
@@ -259,6 +259,8 @@ rather than blanking the api_key (since blanks fall back to env).
 **`/analyze` returns 429.** The per-IP rate limit (default 3/day). Either wait, raise the limit (`make usage` then PATCH), or come from a different IP.
 
 **LLM features all show "skipped" or "Pro-only".** Either `AQ_LLM_API_KEY` is empty, the user is on free tier, or the budget tripped. Check `make usage`.
+
+**Progress bar / thinking panel only updates after the whole analysis finishes.** Next.js dev server's `rewrites` proxy buffers chunked SSE responses. The frontend now defaults `API_BASE_URL` to `http://127.0.0.1:8000` in dev mode (see `frontend/src/lib/constants.ts`), so EventSource connects directly to the backend and bypasses the proxy. Backend CORS already allows `localhost:3000`. Production builds still use the empty string (same-origin) since real reverse proxies (Nginx, etc.) stream correctly. Override either default via `NEXT_PUBLIC_API_URL`.
 
 ---
 

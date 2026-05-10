@@ -61,6 +61,7 @@ export function CanvasTabs({
     valuation: groups.valuation.length,
     strategy: groups.strategy.length,
     risks: groups.risks.length,
+    pulse: groups.pulse.length,
     sources: groups.sources.length,
   }));
 

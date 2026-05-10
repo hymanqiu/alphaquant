@@ -6,6 +6,7 @@
 
 | 版本 | 日期 | 类型 | 变更摘要 |
 |------|------|------|----------|
+| v0.11.0 | 2026-05-06 | feat | **Pulse Tab — 技术指标 + 大盘 + 情绪看板（13 节点）**：新增第 13 节点 `technical_pulse`（无 LLM、Free 可用），位于 `strategy → technical_pulse → qualitative_analysis`。后端：`technical_pulse_math.py` 11 条规则（8 bull / 3 bear）+ 加权 tanh 评分 0-100，`technicals_data.py` 并发 async 拉 FMP 1Y OHLCV + ^VIX / ^TNX / ^DXY / 板块 ETF + Finnhub insider 90d + CNN F&G（asyncio.gather，冷启动 ~2s → ~400ms），所有 fetcher 套 5 min TTL+LRU 内存缓存（maxsize=256，市场指数同 IP 多次分析共享，FMP 调用 7→0 / 7→3）。前端新 `pulse/` 目录 6 张卡（hero / 1Y K 线 lightweight-charts v5 + MA20 + volume / 4-up 指标网格 / signal chips / 5 项 market context / F&G 半圆渐变仪表盘 + sentiment 列表）。新 `pulse` tab 插入 Risks 与 Sources 之间。`follow_up_v2.yaml` 把 `pulse` 加进 `tab_hint` 严格枚举。`use-analysis-stream.ts::PIPELINE_NODES` 同步加 `technical_pulse`（前端进度条原本硬编码 12 步）。`^TNX` 自适应缩放（CBOE × 10 与 FMP 归一化两种 provider 行为通吃）。验收：150 backend tests / tsc 无新增错误 / Pulse 节点 0 LLM 调用。详见 [ADR 013](docs/decisions/013-pulse-tab.md)。 |
 | v0.10.0 | 2026-05-01 | feat | **Watchlist + Follow-up Q&A（Phase 3）**：新 `WatchlistItem` ORM（user_id+ticker 唯一约束，`target_mos_pct` 阈值占位）+ `/api/watchlist` CRUD（cron 告警留待后续）。Hero 加 [Watch] 按钮 + 阈值对话框（[-100, 100] 客户端验证）；sidebar 加 "Watching" 段落，点击 ticker 触发重分析。新 `/api/follow-up` 端点（Pro 必需）+ `follow_up_v1.yaml` prompt：基于当前 hero+canvas 的上下文回答 Q&A，复用现有 LLM 客户端 + 预算守护 + 计费。`<FollowUpSection>` 嵌入对话面板 overlay，threaded Q&A，pending 期间禁止双提交，`tab_hint` 答案带可点击的 tab 跳转。Context value memoize + AbortController 修 logout 期 in-flight 竞态。详见 [ADR 012](docs/decisions/012-watchlist-and-followup.md)。 |
 | v0.9.0 | 2026-05-01 | feat | **Save Thesis + Share Link（Phase 2）**：新 `SavedThesis` ORM（UUID 主键 + JSONB hero/components 快照 + `is_public` 默认 true）+ `/api/saved-thesis` CRUD + 公开 `/api/share/thesis/{id}` 无授权读取。Hero 新增 [Save] / [Share] 按钮（Pro 启用），sidebar 加 "Saved theses" 段落，重访同一 ticker 时 Hero 下方显示 MoS / Confidence / Price / Signal 的差异条。`/s/[id]` 公开只读 canvas（隐藏 Save/Watch + 不显示 diff strip）。详见 [ADR 011](docs/decisions/011-saved-thesis-snapshot.md)。 |
 | v0.8.0 | 2026-05-01 | feat | **Verdict-First UI 重构（Phase 1）**：右侧 19 张卡片纵向堆叠 → sticky **Verdict Hero**（signal/MoS/confidence/risks/thesis/entry-exit 5 字段）+ **5 个 Tab**（Verdict / Valuation / Strategy / Risks & Moat / Sources）。`ConversationPanel` 在 `status==='complete'` 后自动折叠为 **56px rail**，点击展开 420px overlay。推理 trace 从 chat 移至 Sources tab。Tab 不自动切换，新卡片用脉冲点提示。详见 [ADR 010](docs/decisions/010-verdict-first-ui.md)。 |
@@ -18,6 +19,89 @@
 | v0.3.0 | 2026-04-21 | feat | 消息面情绪修正：Finnhub 新闻 + 内部人情绪 → 综合评分 → 安全边际调整。新增 Finnhub 客户端、DeepSeek LLM 情绪分析、sentiment_card 组件 |
 | v0.2.0 | 2026-04-17 | feat | 相对估值（市场乘数法）：当前乘数 + 历史百分位 + 同业对比。新增 FMP API 客户端、relative_valuation_card 组件 |
 | v0.1.0 | 2026-04-17 | — | 初始版本：SEC EDGAR 数据获取、财务健康扫描、DCF 估值建模、买入策略、数据溯源、SSE + Generative UI |
+
+---
+
+## v0.11.0 — Pulse Tab：技术指标 + 大盘 + 情绪看板
+
+**日期：** 2026-05-06
+
+### 概要
+
+填补 Free / Pro 之间的产品差距：技术面 + 大盘 + 情绪面快照对所有用户开放，全程 0 LLM 调用，全局预算耗尽时仍可用。新增第 13 节点 `technical_pulse`，前端新增 6 张卡组成的 `pulse` tab（在 Risks 与 Sources 之间）。详见 [ADR 013](docs/decisions/013-pulse-tab.md)。
+
+### 后端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/backend/agents/nodes/technical_pulse.py` | 第 13 节点主体（含 I/O，串行 async）。FMP key 缺失 / OHLCV < 50 bars / 任意异常 → return `pulse_result=None`，`ErrorEvent(recoverable=True)`，下游 Pro 节点不受影响 |
+| `backend/backend/agents/nodes/technical_pulse_math.py` | 纯函数：SMA/EMA/RSI/MACD/VWAP 5 indicator + 11 detector（8 bull + 3 bear）+ `composite_score()` 加权 tanh 0-100 评分 + 4 张 indicator card builder |
+| `backend/backend/services/technicals_data.py` | FMP `/stable/historical-price-eod/full` + `/stable/quote` + Finnhub `/stock/insider-transactions` + CNN `production.dataviz.cnn.io/index/fearandgreed/graphdata`（browser UA）+ `_SECTOR_ETF` SPDR 11 项映射（FMP profile.sector → XLK/XLF/...）。**4 个 fetcher 套 `@_cached(ttl=300s)` 装饰器**：按非 httpx 客户端 args 为 key、失败结果（None/空 list/`(None, None)`）不缓存让下次重试；同 IP 5 min 内重复分析时 SPY/VIX/TNX/DXY/sector ETF/F&G 全命中 → FMP 调用 7→0（同 ticker）或 7→3（不同 ticker） |
+| `backend/backend/models/technicals.py` | 6 个 Pydantic 数据契约（OHLCV / TechnicalIndicator / TechnicalSignal / MarketContext / SentimentSignals / TechnicalPulse） |
+| `backend/backend/prompts/follow_up_v2.yaml` | bump 自 v1：`tab_hint` 严格枚举里加 `"pulse"` + system prompt 给 LLM 路由提示（"Use 'pulse' for technical indicators / signals / sentiment 等"）。v1 保留 |
+| `backend/tests/agents/nodes/test_technical_pulse_math.py` | 17 个单测覆盖评分阈值、5 个关键 detector（golden cross / MACD 5d 窗口 / RSI bearish divergence / distribution days ≥4 / above_vwap 5 连日 / relative strength vs SPY） |
+| `docs/nodes/13-technical-pulse.md` | 节点合同文档 |
+| `docs/decisions/013-pulse-tab.md` | ADR：决策摘要 + 11 条规则全表 + 视觉规范 + 降级策略 + 验收清单 |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `backend/backend/models/agent_state.py` | 加 `pulse_result: dict[str, Any] \| None` |
+| `backend/backend/agents/value_analyst.py` | import + `add_node("technical_pulse", ...)` + 重接边 `strategy → technical_pulse → qualitative_analysis`，docstring 节点链更新 |
+| `backend/backend/api/follow_up.py` | `complete_json(prompt_name="follow_up", version=2, ...)`（v1 → v2）|
+
+### 前端变更
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `frontend/src/components/pulse/pulse-score-hero.tsx` | 浅色主题 Card：`text-[44px]` mono 评分 + tone-colored badge（bull=emerald / bear=rose / neutral=amber）+ 力量条（`% bullish weight`）|
+| `frontend/src/components/pulse/price-chart-card.tsx` | shadcn Card 外壳，`next/dynamic` + `{ ssr: false }` 加载 impl |
+| `frontend/src/components/pulse/price-chart-impl.tsx` | lightweight-charts v5：`addSeries(CandlestickSeries / LineSeries / HistogramSeries)`，3M/6M/1Y 切换仅调 `setVisibleRange()` 不重建图，theme detect 一次（depth 检 `<html.dark>`），unmount 时 `chart.remove()` 防泄漏 |
+| `frontend/src/components/pulse/indicator-grid-card.tsx` | `grid-cols-2 sm:grid-cols-4`：RSI 14 / MACD hist / MA stack / 52W position 四张 tile，长 value（"20 > 50 > 200"）自动缩到 `text-[16px]` |
+| `frontend/src/components/pulse/signal-chips-card.tsx` | bull 优先 + 组内 weight 降序，pill chip + 原生 `title` tooltip + `animate-in fade-in slide-in-from-bottom-1` 每 chip 40ms stagger（无 framer-motion）|
+| `frontend/src/components/pulse/market-context-card.tsx` | `grid-cols-2 sm:grid-cols-5` 五项 tile：SPY / VIX / 10Y / DXY / 板块 ETF。change_pct 按符号着色（涨绿跌红）；绝对值（VIX/10Y/DXY）中性；任一缺失 → "—" |
+| `frontend/src/components/pulse/sentiment-pulse-card.tsx` | SVG 半圆 F&G gauge：viewBox 200×130，半径 80，多色 linearGradient（rose-500 → amber-500 → emerald-500），spring 入场动画（`useEffect + requestAnimationFrame` + cubic-bezier(0.34, 1.56, 0.64, 1)），指针端点 `feGaussianBlur` glow，theme 适配（`stroke-foreground`）。右半 4 行 sentiment metrics |
+
+#### 修改文件
+
+| 文件 | 变更内容 |
+|------|----------|
+| `frontend/src/components/canvas/tab-groups.ts` | `TabId` 加 `"pulse"`，`TAB_ORDER` 插入 `verdict, valuation, strategy, risks, pulse, sources`，`TAB_BY_TYPE` 加 6 个 `pulse_*` 映射，`groupByTab` 初始 record 加 `pulse: []` |
+| `frontend/src/components/canvas/canvas-tabs.tsx` | `seenCounts` 初始化加 `pulse: groups.pulse.length` |
+| `frontend/src/components/component-registry.ts` | 注册 6 个 pulse 组件的 `lazy(() => import("./pulse/..."))` |
+| `frontend/src/hooks/use-analysis-stream.ts` | `PIPELINE_NODES` 加 `technical_pulse`（位置在 `strategy` 之后，跟后端 graph 同序）。这是 task progress 进度条的真相源——硬编码 12 步会导致新节点的 step_complete 事件被忽略、进度条停滞 |
+| `frontend/package.json` | 加 `lightweight-charts@^5` 依赖 |
+| `frontend/AGENTS.md` | 加 lightweight-charts ssr:false 注意事项 |
+
+### 关键设计
+
+- **0 LLM 调用**：纯规则。全局 LLM 预算耗尽 / `AQ_LLM_API_KEY` 为空时 Pulse tab 仍可用——这是本节点最大工程优势
+- **节点位置**：`strategy` 之后、`qualitative_analysis`（Pro）之前。Pro 节点失败不影响 Pulse、Pulse 失败不影响 Pro
+- **Free 可用，预留 Pro 钩子**：v1 不实现 `pulse_score_explainer_locked_card` / `insider_detail_locked_card`（ADR §4.8）
+- **视觉一致性**：浅色主题主导，配色用 emerald / rose / amber（与 strategy_dashboard / risk_factors_card 同色系），不强制深色 + neon
+- **`^TNX` 自适应**：值 > 20 才 ÷10——同时覆盖 CBOE 原生（yield × 10）与 FMP 归一化两种 provider 行为
+- **3M/6M/1Y 切换零网络**：单次 setData 全 1Y 数据，切换只调 `setVisibleRange()`
+- **TTL 缓存挡 FMP 限流**：免费档每天 250 calls 易耗。`@_cached(ttl=300s)` 装饰器按非 httpx-client args 建 key，市场指数（SPY history / VIX / TNX / DXY / SPDR sector ETF / CNN F&G）全 IP 共享；失败值不缓存让下一次重试。一个交互测试 session 内 FMP 调用从每分析 7 次降到 0-3 次
+- **lightweight-charts v5 与 Next.js 16 协作**：必须 `dynamic + ssr:false`（库 import 即触 `window`），见 `frontend/AGENTS.md`
+
+### 已知未做
+
+- **AAII bull-bear 数据**：v1 返回 None（待注册账号），sentiment_pulse_card 该行显示 "—"
+- **Pulse 数据不进 saved_theses**：每次重新计算（无缓存）
+- **K 线主题切换不实时**：mount 时一次性 detect `<html.dark>` 设色；用户切换主题需刷新页面（避免装 MutationObserver）
+- **行业横向比较** / **用户自定义信号权重** / **WebSocket 实时推送**：全部留待 v0.12+
+
+### 验证
+
+- `pytest -q` → **150 passed**（17 新 + 133 旧无回归）
+- `pytest -q tests/agents/nodes/test_technical_pulse_math.py` → 17 passed
+- `npx tsc --noEmit` → 5 个预存 recharts 类型错误（fcf-chart / revenue-chart）与 Pulse 无关
+- `/api/admin/usage` 24h 内 task tags 不含 `pulse` / `technical_pulse` → 节点全程未触 LLM client
 
 ---
 

@@ -26,6 +26,13 @@ const registry: Record<string, ComponentType<any>> = {
   qualitative_locked_card: lazy(() => import("./analysis/pro-locked-card")),
   risk_yoy_diff_locked_card: lazy(() => import("./analysis/pro-locked-card")),
   moat_locked_card: lazy(() => import("./analysis/pro-locked-card")),
+  // Pulse tab — rule-based technical snapshot (free-tier accessible)
+  pulse_score_hero: lazy(() => import("./pulse/pulse-score-hero")),
+  price_chart_card: lazy(() => import("./pulse/price-chart-card")),
+  indicator_grid_card: lazy(() => import("./pulse/indicator-grid-card")),
+  signal_chips_card: lazy(() => import("./pulse/signal-chips-card")),
+  market_context_card: lazy(() => import("./pulse/market-context-card")),
+  sentiment_pulse_card: lazy(() => import("./pulse/sentiment-pulse-card")),
 };
 
 export function getComponent(type: string): ComponentType<any> | null {

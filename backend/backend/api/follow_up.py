@@ -198,7 +198,7 @@ async def follow_up(
             client = get_llm_client()
             answer: FollowUpAnswer = await client.complete_json(
                 prompt_name="follow_up",
-                version=1,
+                version=2,
                 variables=variables,
                 task_tag="follow_up",
                 response_model=FollowUpAnswer,
