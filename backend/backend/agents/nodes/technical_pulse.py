@@ -4,14 +4,17 @@ Produces a 1Y technical-indicator + market + sentiment snapshot, packaged for
 the frontend's Pulse tab. Free-tier accessible (no LLM calls; the whole tab is
 deterministic + rule-based, see ADR-010).
 
-Sequential async data fetches (per ADR-010 §10): one transient httpx.AsyncClient
-shared across FMP calls, plus one for Finnhub. Any sub-query failure → that
-field is ``None`` and the node continues; only OHLCV failure or missing FMP key
-short-circuits the whole node.
+Concurrent data fetches: ticker OHLCV is awaited first (a hard prerequisite —
+its failure short-circuits the node). Everything else (SPY history, company
+profile, market quotes, insider txns, F&G index) is gathered in parallel.
+The sector-ETF quote is sequential since the symbol depends on profile.sector.
+All fetchers swallow httpx errors internally and return sentinel values, so
+``asyncio.gather`` with default semantics is safe.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -118,7 +121,49 @@ async def technical_pulse_node(
                 ],
             }
 
-        spy_history = await fetch_history(fmp_client, "SPY", n_days=370)
+        # Phase 2: gather everything that doesn't depend on profile.sector.
+        # Each fetcher swallows its own httpx errors and returns a sentinel
+        # (empty list / (None, None) / None / {}), so plain gather is safe.
+        (
+            spy_history,
+            profile,
+            spy_quote,
+            vix_quote,
+            tnx_quote,
+            dxy_quote,
+            insider_net,
+            fg,
+        ) = await asyncio.gather(
+            fetch_history(fmp_client, "SPY", n_days=370),
+            market_data_client.get_company_profile(ticker),
+            fetch_quote(fmp_client, "SPY"),
+            fetch_quote(fmp_client, "^VIX"),
+            fetch_quote(fmp_client, "^TNX"),
+            fetch_quote(fmp_client, "^DXY"),
+            fetch_insider_net_90d(finnhub_client, ticker),
+            fetch_fear_greed(),
+        )
+
+        # Phase 3: sector ETF quote (depends on profile).
+        sector_etf = sector_to_etf(profile.get("sector"))
+        _, sector_chg = await fetch_quote(fmp_client, sector_etf)
+
+        spy_price, spy_chg = spy_quote
+        vix_price, _ = vix_quote
+        tnx_price, _ = tnx_quote
+        dxy_price, _ = dxy_quote
+
+        # Phase 4: DXY fallback — try plain DXY only if ^DXY missed (rare).
+        if dxy_price is None:
+            dxy_price, _ = await fetch_quote(fmp_client, "DXY")
+
+        # CBOE's raw ^TNX is yield × 10 (e.g. 42.5 == 4.25%); some providers
+        # (incl. FMP /stable/quote at times) normalize it to percent already.
+        # 10Y treasury yield realistically lives in [0, 15]%, so values > 20
+        # are unambiguously the CBOE convention and need to be scaled down.
+        tnx_yield: float | None = tnx_price
+        if tnx_yield is not None and tnx_yield > 20:
+            tnx_yield /= 10.0
 
         closes = [b.close for b in history]
         highs = [b.high for b in history]
@@ -145,26 +190,6 @@ async def technical_pulse_node(
             ),
         ).model_dump())
 
-        # Market context — sequential, each best-effort
-        profile = await market_data_client.get_company_profile(ticker)
-        sector_etf = sector_to_etf(profile.get("sector"))
-
-        spy_price, spy_chg = await fetch_quote(fmp_client, "SPY")
-        vix_price, _ = await fetch_quote(fmp_client, "^VIX")
-        tnx_price, _ = await fetch_quote(fmp_client, "^TNX")
-        # CBOE's raw ^TNX is yield × 10 (e.g. 42.5 == 4.25%); some providers
-        # (incl. FMP /stable/quote at times) normalize it to percent already.
-        # 10Y treasury yield realistically lives in [0, 15]%, so values > 20
-        # are unambiguously the CBOE convention and need to be scaled down.
-        tnx_yield: float | None = tnx_price
-        if tnx_yield is not None and tnx_yield > 20:
-            tnx_yield /= 10.0
-        # Try ^DXY first; fall back to plain DXY for plans that omit the caret.
-        dxy_price, _ = await fetch_quote(fmp_client, "^DXY")
-        if dxy_price is None:
-            dxy_price, _ = await fetch_quote(fmp_client, "DXY")
-        _, sector_chg = await fetch_quote(fmp_client, sector_etf)
-
         market_ctx = MarketContext(
             spy_change_pct=spy_chg,
             vix=vix_price,
@@ -173,10 +198,6 @@ async def technical_pulse_node(
             sector_etf_symbol=sector_etf,
             sector_change_pct=sector_chg,
         )
-
-        # Sentiment — best-effort
-        insider_net = await fetch_insider_net_90d(finnhub_client, ticker)
-        fg = await fetch_fear_greed()
 
         sentiment = SentimentSignals(
             fear_greed_value=fg[0] if fg else None,
@@ -253,7 +274,6 @@ async def technical_pulse_node(
         props={
             "ticker": ticker,
             "active_signals": [s.model_dump() for s in signals],
-            "bullish_pct": bull_pct,
         },
     ).model_dump())
 

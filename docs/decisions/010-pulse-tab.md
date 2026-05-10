@@ -61,12 +61,11 @@ graph.add_edge("technical_pulse", "qualitative_analysis")
 
 ```
 backend/agents/nodes/technical_pulse.py            主节点（含 I/O）
-backend/agents/nodes/_technical_pulse_math.py      纯函数：信号判定 + 评分
-backend/services/data/technicals.py                FMP/Finnhub 数据访问层
-backend/models/agent_state.py                      增加 TechnicalPulse 字段
-backend/models/events.py                           （如需）扩展 component_type 枚举
+backend/agents/nodes/technical_pulse_math.py       纯函数：信号判定 + 评分
+backend/services/technicals_data.py                FMP/Finnhub 数据访问层 + TTL+LRU 缓存
+backend/models/technicals.py                       6 个 Pydantic 数据契约
+backend/models/agent_state.py                      增加 pulse_result 字段
 backend/tests/agents/nodes/test_technical_pulse_math.py   单测（仅 _math）
-backend/tests/fixtures/ohlcv_*.json                测试 fixture
 docs/nodes/13-technical-pulse.md                   节点合同文档
 ```
 
@@ -136,7 +135,7 @@ class TechnicalPulse(BaseModel):
 ### 4.4 信号规则全表
 
 数据：`closes`, `highs`, `lows`, `volumes`（最近 1Y daily）；`spy_closes`（同期 SPY）。
-所有信号在 `_technical_pulse_math.py::detect_signals(...)` 内判定，返回 `list[TechnicalSignal]`。
+所有信号在 `technical_pulse_math.py::detect_signals(...)` 内判定，返回 `list[TechnicalSignal]`。
 
 #### Bull（8 条）
 
@@ -159,7 +158,7 @@ class TechnicalPulse(BaseModel):
 | `rsi_bearish_divergence` | `close[t] > max(close[-20:-1])` 且 `RSI14[t] < max(RSI14[-20:-1])` | 1.5 |
 | `distribution_days` | 30 日内分布日数 ≥ 4。分布日定义：`close_d < close_{d-1}` 且 `vol_d > 1.25 × avg(vol[-30:])` | 0.8 |
 
-权重表写死在 `_technical_pulse_math.py::SIGNAL_WEIGHTS`，作为 v1 常量。后续调权 = 升 v2 函数版本。
+权重表写死在 `technical_pulse_math.py::SIGNAL_WEIGHTS`，作为 v1 常量。后续调权 = 升 v2 函数版本。
 
 ### 4.5 综合评分
 
@@ -211,7 +210,12 @@ def signal_label(score: int) -> str:
 
 ### 4.8 Provider 限流缓冲（v0.11 实施）
 
-FMP 免费档每天 250 calls 易耗。`technicals_data.py` 顶部装饰器 `@_cached(ttl=300s)` 应用到所有 4 个 fetcher，按非 httpx-client args 建 key、失败值不缓存。
+FMP 免费档每天 250 calls 易耗。`technicals_data.py` 顶部装饰器 `@_cached(ttl=300s, maxsize=256)` 应用到所有 4 个 fetcher。设计要点：
+
+- **Key**：所有非 `httpx.AsyncClient` 的 args + 排序后的 kwargs（同一 fetcher 跨调用复用同一 transient client 不破坏命中）
+- **失败不缓存**：`_is_empty_result()` 判断 `None` / 空 list / 全 None tuple → 跳过写入，下次调用重试
+- **LRU + TTL 双约束**：用 `OrderedDict`，命中时 `move_to_end` 续 LRU 优先级；写入超过 `maxsize=256` 时 `popitem(last=False)` 淘汰最旧条目；命中后再做 TTL 检查决定是否过期。这样 long-running uvicorn 持续接收新 ticker 时 store 不会无限增长。
+- **粒度**：每个 decorated 函数独立 closure，互不污染
 
 效果（同 IP 5 min 内）：
 - **同 ticker 重新分析**：FMP 调用 7→0，所有数据命中缓存
@@ -219,6 +223,17 @@ FMP 免费档每天 250 calls 易耗。`technicals_data.py` 顶部装饰器 `@_c
 - **冷启动**：保持 7 个 FMP 调用
 
 实现细节见 `docs/nodes/13-technical-pulse.md#ttl-缓存`。生产环境想跨 worker 共享需上 Redis（v0.11 不需）。
+
+### 4.9 并发数据获取（v0.11 review 后追加）
+
+ADR 早期主张 ❌"不要异步并发拉，保持简单"。Code review 指出冷启动 latency 9 个串行 await ≈ 1.5–2s 直接卡在 12-节点关键路径上，于是改为：
+
+- **阶段 1**：`fetch_history(ticker)` 单独 await（必需，失败短路）
+- **阶段 2**：`asyncio.gather(spy_history, profile, spy_quote, vix, tnx, dxy, insider, fg)` 并发拉 8 项
+- **阶段 3**：`fetch_quote(sector_etf)` 单独 await（依赖 profile.sector）
+- **阶段 4**：`fetch_quote("DXY")` 仅在 `^DXY` 拿不到时回退（极少触发）
+
+冷启动 cold cache：~2s → ~400ms。所有 fetcher 内部 try/except 吞 httpx 异常并返回 sentinel，因此 `gather` 默认 `return_exceptions=False` 安全。
 
 ### 4.9 Pro 钩子（v1 占位、v1.1 实施）
 
@@ -365,7 +380,7 @@ npm install lightweight-charts
 
 ## 6. 测试要求
 
-按项目"节点纯/不纯拆分"约定，**仅** `_technical_pulse_math.py` 写单测。主节点（含 I/O）不写。
+按项目"节点纯/不纯拆分"约定，**仅** `technical_pulse_math.py` 写单测。主节点（含 I/O）不写。
 
 `tests/agents/nodes/test_technical_pulse_math.py` 必须覆盖：
 
@@ -430,8 +445,8 @@ pytest -q tests/agents/nodes/test_technical_pulse_math.py
 
 ## 10. CC 实施顺序建议
 
-1. 先 `_technical_pulse_math.py` + 单测 → 全绿后再写主节点
-2. 主节点 + `services/data/technicals.py` → 用 `httpx` 同步调用 FMP/Finnhub，**不要**异步并发拉（保持简单；总耗时 < 3s 即可）
+1. 先 `technical_pulse_math.py` + 单测 → 全绿后再写主节点
+2. 主节点 + `services/technicals_data.py` → ticker history 必先单独 await（失败短路），然后用 `asyncio.gather` 并发拉 SPY history + profile + 4 个 quote + insider + F&G（见 §4.9）；最后 sector ETF quote 单独 await（依赖 profile.sector）
 3. `models/agent_state.py` 加字段，跑一次 `alembic` 检查（如果 AnalysisState 持久化的话；如不持久化跳过）
 4. LangGraph 装配 + `value_analyst.py` 接线
 5. 前端 6 个组件，建议顺序：`pulse-score-hero` → `price-chart-card`（最复杂）→ `indicator-grid-card` → `signal-chips-card` → `market-context-card` → `sentiment-pulse-card`

@@ -1,20 +1,21 @@
 """Data-fetching helpers for the ``technical_pulse`` node.
 
-Sequential async calls (per ADR-010 §10) — keep it simple, no asyncio.gather.
 Each helper degrades gracefully: returns ``None`` / ``[]`` on any failure
-without raising, so the caller can compose a partial pulse snapshot.
+without raising, so callers (notably ``technical_pulse_node``) can fan them
+out via ``asyncio.gather`` and compose a partial snapshot.
 
-In-memory TTL caches (5 min) sit on top of every fetcher to dampen FMP /
-Finnhub / CNN load during a typical interactive testing session — multiple
-``/analyze`` calls within 5 min reuse cached SPY history, market-index
-quotes, sector ETF quotes, insider txns, and F&G index. Failures are not
-cached so the next call gets a fresh shot.
+In-memory TTL+LRU caches (5 min, 256 entries per fetcher) sit on top of every
+fetcher to dampen FMP / Finnhub / CNN load during a typical interactive
+testing session — multiple ``/analyze`` calls within 5 min reuse cached SPY
+history, market-index quotes, sector ETF quotes, insider txns, and F&G index.
+Failures are not cached so the next call gets a fresh shot.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 from datetime import date, timedelta
 from functools import wraps
 from typing import Any, Callable, Coroutine, TypeVar
@@ -28,11 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# TTL cache
+# TTL + LRU cache
 # ---------------------------------------------------------------------------
 
 
 _CACHE_TTL_SECONDS = 300.0  # 5 min — long enough to cover repeat /analyze runs
+_CACHE_MAXSIZE = 256        # bound store growth across long-running uvicorn
 
 T = TypeVar("T")
 
@@ -50,20 +52,23 @@ def _is_empty_result(r: Any) -> bool:
 
 def _cached(
     ttl: float = _CACHE_TTL_SECONDS,
+    maxsize: int = _CACHE_MAXSIZE,
 ) -> Callable[
     [Callable[..., Coroutine[Any, Any, T]]],
     Callable[..., Coroutine[Any, Any, T]],
 ]:
-    """Decorator: in-memory TTL cache keyed by all non-httpx-client args.
+    """Decorator: in-memory TTL+LRU cache keyed by all non-httpx-client args.
 
     httpx.AsyncClient instances are skipped in the key so different per-call
-    transient clients don't bust the cache.
+    transient clients don't bust the cache. The store is bounded to ``maxsize``
+    via OrderedDict-as-LRU so a long-running uvicorn process accumulating
+    distinct tickers doesn't grow it unboundedly.
     """
 
     def decorator(
         fn: Callable[..., Coroutine[Any, Any, T]],
     ) -> Callable[..., Coroutine[Any, Any, T]]:
-        store: dict[tuple, tuple[float, T]] = {}
+        store: "OrderedDict[tuple, tuple[float, T]]" = OrderedDict()
 
         @wraps(fn)
         async def wrapped(*args: Any, **kwargs: Any) -> T:
@@ -74,10 +79,14 @@ def _cached(
             now = time.monotonic()
             hit = store.get(key)
             if hit is not None and now - hit[0] < ttl:
+                store.move_to_end(key)
                 return hit[1]
             result = await fn(*args, **kwargs)
             if not _is_empty_result(result):
                 store[key] = (now, result)
+                store.move_to_end(key)
+                while len(store) > maxsize:
+                    store.popitem(last=False)
             return result
 
         return wrapped

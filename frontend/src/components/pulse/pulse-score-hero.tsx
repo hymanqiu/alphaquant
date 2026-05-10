@@ -42,12 +42,6 @@ const BADGE_DOT: Record<Tone, string> = {
   neutral: "bg-amber-500",
 };
 
-const BAR_FILL: Record<Tone, string> = {
-  bull: "bg-emerald-500",
-  bear: "bg-emerald-500",   // bullish weight bar is emerald regardless
-  neutral: "bg-emerald-500",
-};
-
 export default function PulseScoreHero({
   ticker,
   entity_name,
@@ -126,10 +120,7 @@ export default function PulseScoreHero({
         <div className="space-y-1.5">
           <div className="relative h-1.5 rounded-full bg-rose-500/15 overflow-hidden">
             <div
-              className={cn(
-                "absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out",
-                BAR_FILL[t],
-              )}
+              className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 transition-[width] duration-700 ease-out"
               style={{ width: `${bullPctInt}%` }}
             />
           </div>

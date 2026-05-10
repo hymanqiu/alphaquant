@@ -17,7 +17,6 @@ interface TechnicalSignal {
 interface SignalChipsCardProps {
   ticker: string;
   active_signals: TechnicalSignal[];
-  bullish_pct: number;
 }
 
 const CHIP_BG: Record<Direction, string> = {

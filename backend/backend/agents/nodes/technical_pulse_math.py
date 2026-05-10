@@ -214,8 +214,7 @@ def detect_golden_cross(closes: Sequence[float], window: int = 5) -> TechnicalSi
 def detect_macd_bullish_crossover(
     closes: Sequence[float], window: int = 5
 ) -> TechnicalSignal | None:
-    _, sig, _ = macd(closes)
-    macd_line, _, _ = macd(closes)  # cheap re-call; macd() is fast
+    macd_line, sig, _ = macd(closes)
     n = len(closes)
     start = max(1, n - window)
     for t in range(start, n):
