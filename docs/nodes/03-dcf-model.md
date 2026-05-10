@@ -143,7 +143,7 @@
    └── 封顶: min(max(raw_growth, 2%), 30%)
 
 2. 估算 WACC:
-   ├── beta = market_profile.beta or 1.2  (优先 FMP 实时值)
+   ├── beta = market_profile.beta if not None else 1.2  (优先 FMP 实时值; 仅 None 触发回退, 真实 beta=0.0 保留)
    ├── cost_of_equity = risk_free(4.5%) + beta × ERP(5.5%)
    ├── cost_of_debt = interest / debt (仅当债务数据完整时)
    ├── 若 stockholders_equity ≤ 0 且有 market_cap → 用 market_cap 替代权益权重

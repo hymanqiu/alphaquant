@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import pytest
 
-from backend.agents.nodes.dcf_model import _estimate_wacc, compute_dcf
+from backend.agents.nodes.dcf_model import _estimate_wacc, _run_dcf, compute_dcf
+from backend.models.financial import AnnualMetric, CompanyFinancials
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +135,12 @@ class TestEstimateWaccFloor:
     a WACC below 4 %, which dramatically over-values them. We floor at 4 %
     as a guardrail; this test pins the threshold."""
 
-    def test_low_beta_clamped_to_floor(self) -> None:
+    def test_low_beta_returns_raw_cost_of_equity(self) -> None:
+        """beta=0.1 lands at 0.0505, already above the 4 % floor — verifies
+        the no-debt branch returns cost-of-equity unchanged when it does not
+        need clamping. (Renamed from ``test_low_beta_clamped_to_floor`` —
+        the previous name over-promised: the floor never actually engages
+        here.)"""
         wacc = _estimate_wacc(
             debt=None, equity=None, interest_expense=None, beta=0.1,
         )
@@ -142,12 +148,15 @@ class TestEstimateWaccFloor:
         # No debt branch → returns max(0.0505, 0.04) = 0.0505 (above floor)
         assert wacc == pytest.approx(0.0505, abs=1e-4)
 
-    def test_zero_beta_clamped_to_floor(self) -> None:
-        """beta=0 → cost_of_equity = 0.045 → floor kicks in at 4 %."""
+    def test_zero_beta_returns_raw_cost_of_equity(self) -> None:
+        """beta=0 → cost_of_equity = risk_free_rate = 0.045, above floor.
+        Verifies the no-debt branch handles the beta=0 corner without
+        crashing or rewriting to 1.2. (Renamed from
+        ``test_zero_beta_clamped_to_floor`` — at 0.045 the floor doesn't
+        actually engage; clamp behavior is covered by the next test.)"""
         wacc = _estimate_wacc(
             debt=None, equity=None, interest_expense=None, beta=0.0,
         )
-        # cost_of_equity = 0.045 which is above 0.04 → returned as-is
         assert wacc == pytest.approx(0.045, abs=1e-4)
 
     def test_full_branch_with_low_costs_floors_at_4pct(self) -> None:
@@ -162,3 +171,84 @@ class TestEstimateWaccFloor:
         )
         # Without floor: ~0.91 * 0.0008 + 0.09 * 0.045 ≈ 0.0048 → clamps to 0.04
         assert wacc == pytest.approx(0.04, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# _run_dcf — beta fallback semantics (regression guard)
+# ---------------------------------------------------------------------------
+
+
+def _annual(value: float, year: int = 2024) -> AnnualMetric:
+    return AnnualMetric(
+        calendar_year=year,
+        value=value,
+        fiscal_year=year,
+        filing_date=f"{year}-12-31",
+        sec_accession="0000000000-00-000000",
+        form="10-K",
+    )
+
+
+def _minimal_financials() -> CompanyFinancials:
+    """Just enough state for ``_run_dcf`` to succeed end-to-end."""
+    fcf_series = [_annual(1_000_000.0, y) for y in (2020, 2021, 2022, 2023, 2024)]
+    return CompanyFinancials(
+        cik=1,
+        ticker="TEST",
+        entity_name="Test Co",
+        free_cash_flow=fcf_series,
+        diluted_shares=[_annual(1_000_000.0)],
+        long_term_debt=[_annual(500_000.0)],
+        stockholders_equity=[_annual(2_000_000.0)],
+        interest_expense=[_annual(25_000.0)],
+        cash_and_equivalents=[_annual(800_000.0)],
+    )
+
+
+class TestRunDcfBetaFallback:
+    """Regression guard for the ``profile.get('beta') or 1.2`` →
+    ``if beta is None: beta = 1.2`` change. The unit test for
+    ``_estimate_wacc(beta=0.0)`` alone is not enough — the bug lives one
+    layer up in ``_run_dcf`` where the fallback is applied. If someone
+    reverts that line to the ``or`` form, this test should fail."""
+
+    def test_explicit_zero_beta_is_preserved(self) -> None:
+        """A real beta of 0.0 from FMP must not silently become 1.2."""
+        captured: dict[str, float] = {}
+
+        def fake_writer(event: dict) -> None:
+            # Reasoning steps surface beta — capture it from the WACC
+            # message the node emits.
+            pass
+
+        result = _run_dcf(
+            _minimal_financials(),
+            fake_writer,
+            market_profile={"beta": 0.0, "market_cap": 5_000_000.0},
+        )
+        # WACC reasoning string contains the beta we used. Pull it out and
+        # confirm it's 0.00, not 1.20 (which is what `or 1.2` would have
+        # produced).
+        wacc_step = next(
+            (s for s in result["reasoning_steps"] if "beta=" in s), None,
+        )
+        assert wacc_step is not None
+        assert "beta=0.00" in wacc_step
+        captured["dr"] = result["dcf_result"]["assumptions"]["discount_rate"]
+        # With beta=0 + the floor, WACC should be well below the legacy
+        # beta=1.2 outcome (~10.6 %). Anything ≤ 6 % proves the 0.0 was
+        # honored rather than rewritten.
+        assert captured["dr"] <= 6.0
+
+    def test_missing_beta_falls_back_to_legacy_default(self) -> None:
+        """When FMP omits beta entirely, fallback to 1.2 still works."""
+        result = _run_dcf(
+            _minimal_financials(),
+            lambda _e: None,
+            market_profile={},  # no beta key
+        )
+        wacc_step = next(
+            (s for s in result["reasoning_steps"] if "beta=" in s), None,
+        )
+        assert wacc_step is not None
+        assert "beta=1.20" in wacc_step
