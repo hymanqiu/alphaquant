@@ -32,3 +32,9 @@ backend/alembic/__pycache__/
 
 # Frontend incremental build cache
 frontend/tsconfig.tsbuildinfo
+
+# Local financial model spreadsheets (personal scratch, never commit)
+*.xlsx
+*.xls
+~$*.xlsx
+~$*.xls
