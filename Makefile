@@ -6,7 +6,7 @@
 PYTHON ?= python3
 BACKEND := backend
 FRONTEND := frontend
-VENV := $(BACKEND)/.venv
+VENV := .venv
 ACTIVATE := . $(VENV)/bin/activate
 
 # Defaulting to "help" instead of "all" so a bare `make` doesn't blow anything up.
