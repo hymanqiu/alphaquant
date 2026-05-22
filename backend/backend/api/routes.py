@@ -174,7 +174,7 @@ async def recalculate_dcf(
     latest_fcf = financials.free_cash_flow[-1].value
     shares = financials.diluted_shares[-1].value if financials.diluted_shares else None
     cash = financials.cash_and_equivalents[-1].value if financials.cash_and_equivalents else None
-    debt = financials.long_term_debt[-1].value if financials.long_term_debt else None
+    debt = financials.total_debt[-1].value if financials.total_debt else None
 
     result = compute_dcf(
         latest_fcf=latest_fcf,
@@ -183,7 +183,7 @@ async def recalculate_dcf(
         discount_rate=payload.discount_rate / 100,
         shares_outstanding=shares,
         cash=cash,
-        long_term_debt=debt,
+        total_debt=debt,
     )
 
     # Include historical + projected FCF for chart update

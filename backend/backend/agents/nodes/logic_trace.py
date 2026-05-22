@@ -87,7 +87,7 @@ def _run_logic_trace(state: AnalysisState, financials: Any, writer: StreamWriter
         ("Capital Expenditure", financials.capital_expenditure),
         ("Free Cash Flow", financials.free_cash_flow),
         ("Interest Expense", financials.interest_expense),
-        ("Long-Term Debt", financials.long_term_debt),
+        ("Total Debt", financials.total_debt),
         ("Cash & Equivalents", financials.cash_and_equivalents),
         ("Diluted EPS", financials.diluted_eps),
         ("Diluted Shares", financials.diluted_shares),

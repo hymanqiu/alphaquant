@@ -2,8 +2,8 @@
 
 Covers the four branches added/changed in the real-beta + net-debt PR:
 
-1. ``compute_dcf`` legacy mode (no ``cash``/``long_term_debt``) vs. partial
-   net-debt adjustment mode.
+1. ``compute_dcf`` legacy mode (no ``cash``/``total_debt``) vs. net-debt
+   adjustment mode.
 2. ``_estimate_wacc`` market-cap fallback when book equity ≤ 0.
 3. ``_estimate_wacc`` 4 % WACC floor for very-low-beta names.
 4. (beta-fallback semantics — exercised via ``compute_dcf`` callers, see
@@ -28,7 +28,7 @@ from backend.models.financial import AnnualMetric, CompanyFinancials
 
 
 class TestComputeDcfNetDebtAdjustment:
-    """Equity value should reflect (EV + cash − long_term_debt) when both
+    """Equity value should reflect (EV + cash − total_debt) when both
     capital-structure inputs are supplied; otherwise legacy EV-only path."""
 
     BASE_KWARGS = {
@@ -45,19 +45,19 @@ class TestComputeDcfNetDebtAdjustment:
         assert result["equity_value"] == result["enterprise_value"]
 
     def test_only_cash_provided_falls_back_to_legacy(self) -> None:
-        """Net-debt adjustment requires BOTH cash and long_term_debt."""
+        """Net-debt adjustment requires BOTH cash and total_debt."""
         result = compute_dcf(**self.BASE_KWARGS, cash=500_000.0)
         assert result["equity_value"] == result["enterprise_value"]
 
     def test_only_debt_provided_falls_back_to_legacy(self) -> None:
-        result = compute_dcf(**self.BASE_KWARGS, long_term_debt=500_000.0)
+        result = compute_dcf(**self.BASE_KWARGS, total_debt=500_000.0)
         assert result["equity_value"] == result["enterprise_value"]
 
     def test_both_provided_applies_adjustment(self) -> None:
-        """equity = EV + cash − long_term_debt (long-term debt only)."""
+        """equity = EV + cash − total_debt (LT + ST + current portion of LTD)."""
         cash = 800_000.0
         debt = 300_000.0
-        result = compute_dcf(**self.BASE_KWARGS, cash=cash, long_term_debt=debt)
+        result = compute_dcf(**self.BASE_KWARGS, cash=cash, total_debt=debt)
 
         ev = result["enterprise_value"]
         expected_equity = round(ev + cash - debt, 2)
@@ -66,7 +66,7 @@ class TestComputeDcfNetDebtAdjustment:
     def test_per_share_uses_adjusted_equity(self) -> None:
         cash = 800_000.0
         debt = 300_000.0
-        result = compute_dcf(**self.BASE_KWARGS, cash=cash, long_term_debt=debt)
+        result = compute_dcf(**self.BASE_KWARGS, cash=cash, total_debt=debt)
 
         expected_per_share = round(
             result["equity_value"] / self.BASE_KWARGS["shares_outstanding"], 2
@@ -198,7 +198,7 @@ def _minimal_financials() -> CompanyFinancials:
         entity_name="Test Co",
         free_cash_flow=fcf_series,
         diluted_shares=[_annual(1_000_000.0)],
-        long_term_debt=[_annual(500_000.0)],
+        total_debt=[_annual(500_000.0)],
         stockholders_equity=[_annual(2_000_000.0)],
         interest_expense=[_annual(25_000.0)],
         cash_and_equivalents=[_annual(800_000.0)],

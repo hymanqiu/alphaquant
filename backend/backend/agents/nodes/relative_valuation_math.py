@@ -74,9 +74,16 @@ def compute_current_multiples(
         return {"price_available": True, "multiples": {}}
 
     market_cap = current_price * shares
-    lt_debt = latest(financials.long_term_debt) or 0
+    # EV uses total_debt (LT + ST + current portion of LTD), matching the
+    # net-debt scope used by DCF. Falls back to long_term_debt when total_debt
+    # is empty so older/sparse filings still produce a defensible EV.
+    debt = (
+        latest(financials.total_debt)
+        or latest(financials.long_term_debt)
+        or 0
+    )
     cash = latest(financials.cash_and_equivalents) or 0
-    ev = market_cap + lt_debt - cash
+    ev = market_cap + debt - cash
 
     revenue = latest(financials.revenue)
     net_income = latest(financials.net_income)
@@ -124,7 +131,9 @@ def compute_historical_multiples(
     ni_by_year = by_year(financials.net_income)
     op_income_by_year = by_year(financials.operating_income)
     equity_by_year = by_year(financials.stockholders_equity)
-    debt_by_year = by_year(financials.long_term_debt)
+    # Same debt-scope choice as compute_current_multiples: prefer total_debt,
+    # fall back to long_term_debt if the aggregate is empty for that ticker.
+    debt_by_year = by_year(financials.total_debt or financials.long_term_debt)
     cash_by_year = by_year(financials.cash_and_equivalents)
     da_by_year = by_year(
         getattr(financials, "depreciation_and_amortization", []) or []

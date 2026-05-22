@@ -298,13 +298,13 @@ async def _run_event_impact(
         else None
     )
     debt = (
-        financials.long_term_debt[-1].value
-        if financials.long_term_debt
+        financials.total_debt[-1].value
+        if financials.total_debt
         else None
     )
 
     recalculated_dcf = recalculate_dcf(
-        adjusted_assumptions, shares, cash=cash, long_term_debt=debt,
+        adjusted_assumptions, shares, cash=cash, total_debt=debt,
     )
 
     reasoning.append(f"Impact analysis summary: {analysis_result['summary']}")
