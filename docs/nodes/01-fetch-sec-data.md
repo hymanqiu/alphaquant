@@ -144,7 +144,8 @@ class AnnualMetric(BaseModel):
 
 3. _normalize(facts, ticker) → CompanyFinancials (归一化)
    ├── 遍历 TAG_MAP (15 个 XBRL 字段 × 1-5 个候选标签)
-   ├── 对每个字段: 尝试所有候选, 选 latest_year 最大的
+   ├── 对每个字段: per-year merge, TAG_MAP 中靠前的标签先占该日历年 (dict.setdefault)
+   │   后续 legacy 标签仅为它未覆盖的年份补值, 保住深度历史
    ├── Frame 去重: CYxxxx (duration) ✓, CYxxxxQ4I (instant) ✓, CYxxxxQx (季度) ✗
    ├── 计算 FCF = OCF - |CapEx| (按日历年匹配)
    └── 返回 16 个 list[AnnualMetric]
@@ -154,7 +155,7 @@ class AnnualMetric(BaseModel):
 
 ## 关键假设
 
-- **XBRL 标签回退策略**: 多候选标签中选 latest_year 最大的 → [ADR 001](../decisions/001-xbrl-tag-fallback.md)
+- **XBRL 标签回退策略**: per-year merge,TAG_MAP 顺序即优先级,同年早 tag 胜出 → [ADR 001](../decisions/001-xbrl-tag-fallback.md)
 - **Frame 去重**: 只保留有 frame 字段的条目，过滤季度数据
 - **数据完整性**: 假设 SEC 10-K 年报数据足够可靠作为估值基础
 
