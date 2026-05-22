@@ -135,27 +135,20 @@ def _extract_annual_metrics(
     tag_candidates: list[str],
     unit: str = "USD",
 ) -> list[AnnualMetric]:
-    """Try all XBRL tag candidates. Return the one with the most recent data."""
-    best: list[AnnualMetric] = []
-    best_latest_year = -1
+    """Merge candidate XBRL tags by calendar year.
 
+    Earlier tags in tag_candidates win for any given year (TAG_MAP encodes
+    preference — modern lease-inclusive tags are listed first). Later legacy
+    tags fill in years the preferred tag does not cover, preserving deep
+    history for relative-valuation use.
+    """
+    merged: dict[int, AnnualMetric] = {}
     for tag in tag_candidates:
         if tag not in facts:
             continue
-
-        result = _extract_for_tag(facts[tag], unit)
-        if not result:
-            continue
-
-        latest_year = result[-1].calendar_year
-        # Prefer tag with most recent data; break ties by count
-        if latest_year > best_latest_year or (
-            latest_year == best_latest_year and len(result) > len(best)
-        ):
-            best = result
-            best_latest_year = latest_year
-
-    return best
+        for metric in _extract_for_tag(facts[tag], unit):
+            merged.setdefault(metric.calendar_year, metric)
+    return sorted(merged.values(), key=lambda m: m.calendar_year)
 
 
 def _compute_free_cash_flow(
